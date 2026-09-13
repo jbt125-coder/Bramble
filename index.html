@@ -1,1 +1,3888 @@
+<!DOCTYPE html>
 
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Ultima-Style RPG</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; background: #000; height: 100%; overflow: hidden;
+    font-family: 'Courier New', monospace; color: #fff; user-select: none;
+  }
+  #app {
+    width: 100%; height: 100vh; max-width: 700px; margin: 0 auto;
+    display: flex; flex-direction: column; background: #000;
+  }
+  #canvasWrap {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    background: #000; min-height: 0; overflow: hidden;
+  }
+  #gameCanvas {
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+  }
+  #controlsRow {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 8px; background: #000; border-top: 1px solid #333; flex-shrink: 0;
+    gap: 6px;
+  }
+  #dpadWrap {
+    display: grid;
+    grid-template-areas: ". n ." "w c e" ". s .";
+    grid-template-columns: 48px 48px 48px;
+    grid-template-rows: 48px 48px 48px;
+    gap: 3px;
+  }
+  .dpadBtn {
+    background: #000; border: 2px solid #6666ff; color: #6666ff;
+    font-size: 18px; cursor: pointer; touch-action: manipulation; font-family: inherit;
+  }
+  .dpadBtn:active { background: #111144; }
+  #cmdBtns {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px;
+    flex: 1; align-content: center; justify-content: flex-end;
+  }
+  .cmdBtn {
+    background: #000; border: 2px solid #ff5555; color: #ff5555;
+    font-size: 11px; padding: 9px 10px; cursor: pointer; touch-action: manipulation;
+    font-family: inherit; font-weight: bold; min-width: 64px;
+  }
+  .cmdBtn:active { background: #331111; }
+  #errBox {
+    position: fixed; bottom: 0; left: 0; right: 0; background: #400; color: #fdd;
+    font-size: 11px; padding: 8px; z-index: 999; display: none; white-space: pre-wrap;
+    max-height: 40vh; overflow: auto;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="canvasWrap">
+    <canvas id="gameCanvas" width="380" height="620"></canvas>
+  </div>
+  <div id="controlsRow">
+    <div id="dpadWrap">
+      <button class="dpadBtn" style="grid-area:n" id="btnN">^</button>
+      <button class="dpadBtn" style="grid-area:w" id="btnW">&lt;</button>
+      <div style="grid-area:c"></div>
+      <button class="dpadBtn" style="grid-area:e" id="btnE">&gt;</button>
+      <button class="dpadBtn" style="grid-area:s" id="btnS">v</button>
+    </div>
+    <div id="cmdBtns">
+      <button class="cmdBtn" id="btnAttack">ATTACK</button>
+      <button class="cmdBtn" id="btnCast">CAST</button>
+      <button class="cmdBtn" id="btnGet">GET</button>
+      <button class="cmdBtn" id="btnStats">STATS</button>
+      <button class="cmdBtn" id="btnRun">RUN</button>
+      <button class="cmdBtn" id="btnFire" style="display:none;">FIRE</button>
+      <button class="cmdBtn" id="btnDismount" style="display:none;">DISMOUNT</button>
+      <button class="cmdBtn" id="btnTame" style="display:none;">TAME</button>
+      <button class="cmdBtn" id="btnShoot" style="display:none;">SHOOT</button>
+    </div>
+  </div>
+</div>
+
+<div id="errBox"></div>
+
+<script>
+window.onerror = function (msg, src, line, col, err) {
+  var box = document.getElementById('errBox');
+  box.style.display = 'block';
+  box.textContent = 'JS ERROR: ' + msg + '\n@ line ' + line + ':' + col + '\n' + (err && err.stack ? err.stack : '');
+};
+
+(function () {
+"use strict";
+
+// ============================================================
+// LOGICAL CANVAS LAYOUT
+// Matches the reference: a big square map viewport on the left
+// (~60% width) with a decorative border, and a party-card panel
+// on the right (~40% width), stacked cards with divider bars.
+// ============================================================
+var LW = 380, LH = 620; // fixed logical resolution — tall/narrow to match phone portrait, minimizing letterbox black bars
+
+// ---------- layout: party strips top & bottom, map fills the space between ----------
+var TOPBAR_H = 56;      // top party strip (2 members side by side) — flush to y=0
+var BOTBAR_H = 56;      // bottom party strip (2 members side by side)
+var LOG_H = 70;         // description/log text area, below everything
+var BORDER = 8;
+var COORD_GAP = 20;     // room for the "(x)(y)" readout above the map border
+var LOC_GAP = 20;       // room for the location-name banner below the map border
+
+var MAP_X0 = 6;
+var MAP_OUTER_W = LW - 12;
+var MAP_Y0 = TOPBAR_H + COORD_GAP;
+var MAP_OUTER_H = LH - TOPBAR_H - COORD_GAP - LOC_GAP - BOTBAR_H - LOG_H;
+
+var MAP_INNER_X0 = MAP_X0 + BORDER;
+var MAP_INNER_Y0 = MAP_Y0 + BORDER;
+var MAP_INNER_W = MAP_OUTER_W - BORDER * 2;
+var MAP_INNER_H = MAP_OUTER_H - BORDER * 2;
+
+var VIEW_TILES = 11;    // tile viewport count (width-limited since LW < LH now)
+var TILE = Math.floor(Math.min(MAP_INNER_W / VIEW_TILES, MAP_INNER_H / VIEW_TILES));
+
+var LOCLABEL_Y = MAP_Y0 + MAP_OUTER_H;
+var BOTBAR_Y0 = LOCLABEL_Y + LOC_GAP;
+var LOG_Y0 = BOTBAR_Y0 + BOTBAR_H;
+
+// ---------- palette ----------
+var PAL = {
+  black: "#000000",
+  purple: "#6666ee",
+  purpleDark: "#3a3aa0",
+  green: "#22cc44",
+  greenDark: "#116622",
+  white: "#ffffff",
+  brick: "#aa2222",
+  brickDark: "#661111",
+  water: "#2244aa",
+  waterLight: "#3a66cc",
+  gray: "#888888",
+  yellow: "#ffee55",
+  red: "#ff4444",
+  skin: "#e0a878",
+  gold: "#ffcc33"
+};
+
+// ============================================================
+// TILE TYPES
+// ============================================================
+var T = {
+  GRASS: 0, WATER: 1, FOREST: 2, MOUNTAIN: 3, ROAD: 4,
+  TOWN: 5, DUNGEON: 6, FLOOR: 7, WALL: 8, DOOR: 9, CHEST: 10, INNKEEPER: 11, SHOPKEEP: 12,
+  TAVERN: 13, FOUNTAIN: 14, HEALER: 15, HORSE: 16, SHIP: 17, ISLAND: 18, ARMORY: 19, KING: 20,
+  STABLE: 21, PORTAL: 22, MOON_GRASS: 23, MOON_SHOP: 24, MOON_PORTAL: 25, ROCKET: 26,
+  HUT: 27, MOAI: 28, SHRINE: 29, CHURCH: 30, GARDEN_FOUNTAIN: 31, VOLCANO: 32, ASIA_CASTLE: 33,
+  GRAVE: 34, BRIDGE: 35, BED: 36, MOURNER: 37, HUT_NPC: 38
+};
+
+function mkMap(w, h, fill) {
+  var g = [];
+  for (var r = 0; r < h; r++) {
+    var row = [];
+    for (var c = 0; c < w; c++) row.push(fill);
+    g.push(row);
+  }
+  return g;
+}
+
+var OW_W = 100, OW_H = 90;
+// the player's starting position matches the safe-zone carved at the
+// continent's center in buildOverworld() — a few tiles west of the town
+var OW_START_X = Math.floor(OW_W / 2) - 12, OW_START_Y = Math.floor(OW_H / 2);
+// ---------- clustered terrain generation ----------
+// Instead of rolling each tile independently (which scatters single tiles
+// everywhere), we seed a handful of "blob centers" per feature type and
+// grow each outward with falling probability, so forests clump into
+// patches, water clumps into lakes/coastline, and mountains form ranges.
+function growBlob(g, w, h, startR, startC, tileType, size, rand, overwritable) {
+  var frontier = [{ r: startR, c: startC }];
+  var placed = 0;
+  var seen = {};
+  seen[startR + "," + startC] = true;
+  while (frontier.length && placed < size) {
+    var idx = Math.floor(rand() * frontier.length);
+    var cell = frontier.splice(idx, 1)[0];
+    if (cell.r <= 0 || cell.c <= 0 || cell.r >= h - 1 || cell.c >= w - 1) continue;
+    if (!overwritable(g[cell.r][cell.c])) continue;
+    g[cell.r][cell.c] = tileType;
+    placed++;
+    var neighbors = [[cell.r - 1, cell.c], [cell.r + 1, cell.c], [cell.r, cell.c - 1], [cell.r, cell.c + 1]];
+    neighbors.forEach(function (n) {
+      var key = n[0] + "," + n[1];
+      if (!seen[key] && rand() < 0.72) { // fall-off chance keeps blobs roughly round, not perfect squares
+        seen[key] = true;
+        frontier.push({ r: n[0], c: n[1] });
+      }
+    });
+  }
+}
+
+function buildOverworld() {
+  // Much larger world: start as one big ocean, then grow a single
+  // compact continent roughly in the middle, leaving a lot of open sea
+  // around it in every direction — matching "much larger ocean" rather
+  // than just a bigger map overall.
+  var g = mkMap(OW_W, OW_H, T.WATER);
+  var seed = 11;
+  function rand() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+  var isOpenWater = function (t) { return t === T.WATER; };
+  var isOpenLand = function (t) { return t === T.GRASS; };
+
+  // the continent: one big grass blob, centered, sized to leave generous
+  // ocean margins on every side
+  var contCenterR = Math.floor(OW_H / 2), contCenterC = Math.floor(OW_W / 2);
+  growBlob(g, OW_W, OW_H, contCenterR, contCenterC, T.GRASS, Math.floor(OW_W * OW_H * 0.09), rand, isOpenWater);
+
+  // a few inland lakes, scaled up for the bigger continent
+  for (var lk = 0; lk < 5; lk++) {
+    var lr = contCenterR - 20 + Math.floor(rand() * 40);
+    var lc = contCenterC - 25 + Math.floor(rand() * 50);
+    growBlob(g, OW_W, OW_H, lr, lc, T.WATER, 10 + Math.floor(rand() * 20), rand, isOpenLand);
+  }
+
+  // mountain ranges
+  for (var mr = 0; mr < 4; mr++) {
+    var startRow = contCenterR - 20 + Math.floor(rand() * 40);
+    var startCol = contCenterC - 25 + Math.floor(rand() * 50);
+    var chainLen = 4 + Math.floor(rand() * 4);
+    for (var seg = 0; seg < chainLen; seg++) {
+      growBlob(g, OW_W, OW_H, startRow, startCol, T.MOUNTAIN, 5 + Math.floor(rand() * 6), rand, isOpenLand);
+      startRow += Math.floor(rand() * 3) - 1;
+      startCol += Math.floor(rand() * 3) - 1;
+    }
+  }
+
+  // the main road to town: a clean straight line from the start zone to
+  // the town gate, laid down BEFORE forests grow so nothing can cut
+  // across it later — trees are then grown to line either side of it,
+  // rather than scattered randomly and occasionally overwriting it
+  var roadRow = contCenterR;
+  var roadStartC = contCenterC - 12, roadEndC = contCenterC + 2;
+  for (var rc = roadStartC; rc <= roadEndC; rc++) {
+    g[roadRow][rc] = T.ROAD;
+  }
+  // tree-lined edges: a row of forest directly above and below the road
+  for (var tc = roadStartC; tc <= roadEndC; tc++) {
+    if (g[roadRow - 1][tc] === T.GRASS && Math.random() < 0.8) g[roadRow - 1][tc] = T.FOREST;
+    if (g[roadRow + 1][tc] === T.GRASS && Math.random() < 0.8) g[roadRow + 1][tc] = T.FOREST;
+  }
+  // the town gate sits exactly at the road's end, so the road always
+  // visibly leads straight to it
+  placeOnNearestGrass(g, roadRow, roadEndC + 1, T.TOWN, rand);
+
+  // forest patches — kept away from the road corridor (and its tree-lined
+  // edges) so they never grow across and break the straight line
+  for (var fp = 0; fp < 16; fp++) {
+    var fr = contCenterR - 22 + Math.floor(rand() * 44);
+    var fc = contCenterC - 27 + Math.floor(rand() * 54);
+    if (Math.abs(fr - roadRow) <= 2 && fc >= roadStartC - 2 && fc <= roadEndC + 2) continue; // skip anything that would encroach on the road
+    growBlob(g, OW_W, OW_H, fr, fc, T.FOREST, 6 + Math.floor(rand() * 10), rand, isOpenLand);
+  }
+
+  placeOnNearestGrass(g, contCenterR - 12, contCenterC + 15, T.DUNGEON, rand);
+
+  // safe starting zone right at the continent's center
+  g[contCenterR - 1][contCenterC - 12] = T.GRASS;
+  g[contCenterR][contCenterC - 12] = T.GRASS;
+  g[contCenterR + 1][contCenterC - 12] = T.GRASS;
+
+  placeHorseAndShip(g, rand);
+  placeExtraWildShips(g, rand);
+  placeScatteredLandmarks(g, rand, contCenterR, contCenterC + 3);
+  placeVolcanoes(g, rand, OW_W, OW_H, 2);
+  return g;
+}
+
+// Scatters the smaller flavor landmarks (huts, moai, shrine, grave) at
+// random grass spots — cheap one-tile features, no special generation
+// needed beyond "somewhere reasonable on solid ground". Huts specifically
+// are kept well clear of the castle, since visiting one is meant to be
+// its own small side trip, not something you stumble on right at the gate.
+function placeScatteredLandmarks(g, rand, castleR, castleC) {
+  var placements = [
+    { type: T.HUT, count: 3, minDistFromCastle: 15 },
+    { type: T.MOAI, count: 2 },
+    { type: T.SHRINE, count: 2 },
+    { type: T.GRAVE, count: 2 }
+  ];
+  placements.forEach(function (p) {
+    var placed = 0, tries = 0;
+    while (placed < p.count && tries < 800) {
+      tries++;
+      var r = 2 + Math.floor(rand() * (OW_H - 4));
+      var c = 2 + Math.floor(rand() * (OW_W - 4));
+      if (g[r][c] !== T.GRASS) continue;
+      if (p.minDistFromCastle) {
+        var d = Math.sqrt((r - castleR) * (r - castleR) + (c - castleC) * (c - castleC));
+        if (d < p.minDistFromCastle) continue;
+      }
+      g[r][c] = p.type;
+      placed++;
+    }
+  });
+}
+
+// Finds the nearest grass tile to (r,c) (spiraling outward) and places
+// the given landmark tile there — used so hardcoded-feeling landmark
+// placement still always resolves onto solid ground on the generated
+// continent, wherever it actually ended up.
+function placeOnNearestGrass(g, r, c, tileType, rand) {
+  for (var radius = 0; radius < 40; radius++) {
+    for (var dr = -radius; dr <= radius; dr++) {
+      for (var dc = -radius; dc <= radius; dc++) {
+        if (Math.abs(dr) !== radius && Math.abs(dc) !== radius) continue; // only the ring edge
+        var rr = r + dr, cc = c + dc;
+        if (g[rr] && g[rr][cc] === T.GRASS) { g[rr][cc] = tileType; return; }
+      }
+    }
+  }
+}
+
+// A handful of extra freely-boardable wild ships scattered around the
+// coastline, in addition to the one from placeHorseAndShip — since ships
+// are no longer pirate-gated, there should be more than one to stumble on.
+function placeExtraWildShips(g, rand) {
+  var placed = 0, tries = 0;
+  while (placed < 4 && tries < 2000) {
+    tries++;
+    var r = 1 + Math.floor(rand() * (OW_H - 2));
+    var c = 1 + Math.floor(rand() * (OW_W - 2));
+    if (g[r][c] === T.GRASS && hasAdjacentWater(g, r, c)) {
+      g[r][c] = T.SHIP;
+      placed++;
+    }
+  }
+}
+
+// Places one wild horse somewhere reachable on open grass, and one derelict
+// ship along a coastline tile (grass tile adjacent to water) — both are
+// fixed one-time pickups on the overworld.
+function placeHorseAndShip(g, rand) {
+  for (var tries = 0; tries < 200; tries++) {
+    var r = 2 + Math.floor(rand() * (OW_H - 4));
+    var c = 2 + Math.floor(rand() * (OW_W - 4));
+    if (g[r][c] === T.GRASS) { g[r][c] = T.HORSE; break; }
+  }
+  for (var tries2 = 0; tries2 < 300; tries2++) {
+    var r2 = 2 + Math.floor(rand() * (OW_H - 4));
+    var c2 = 2 + Math.floor(rand() * (OW_W - 4));
+    if (g[r2][c2] === T.GRASS && hasAdjacentWater(g, r2, c2)) { g[r2][c2] = T.SHIP; break; }
+  }
+}
+function hasAdjacentWater(g, r, c) {
+  var deltas = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  for (var i = 0; i < deltas.length; i++) {
+    var rr = r + deltas[i][0], cc = c + deltas[i][1];
+    if (g[rr] && g[rr][cc] === T.WATER) return true;
+  }
+  return false;
+}
+
+// Carves a walled rectangular room (walls on the border, floor inside)
+// into the grid, with a door punched through one specific wall tile.
+// doorSide: "N" | "S" | "E" | "W" — which wall the door sits on.
+// Carves a walled rectangular room (walls on the border, floor inside)
+// into the grid. openSide/openOffset punches a plain FLOOR gap through
+// that wall (not a T.DOOR) so walking in/out is purely cosmetic — only
+// the town's main gate should trigger the "leave to overworld" behavior.
+function carveRoom(g, x0, y0, w, h, openSide, openOffset) {
+  for (var r = y0; r < y0 + h; r++) {
+    for (var c = x0; c < x0 + w; c++) {
+      var isEdge = (r === y0 || r === y0 + h - 1 || c === x0 || c === x0 + w - 1);
+      g[r][c] = isEdge ? T.WALL : T.FLOOR;
+    }
+  }
+  var off = openOffset || Math.floor((openSide === "N" || openSide === "S" ? w : h) / 2);
+  if (openSide === "N") g[y0][x0 + off] = T.FLOOR;
+  else if (openSide === "S") g[y0 + h - 1][x0 + off] = T.FLOOR;
+  else if (openSide === "W") g[y0 + off][x0] = T.FLOOR;
+  else if (openSide === "E") g[y0 + off][x0 + w - 1] = T.FLOOR;
+}
+
+function buildTown() {
+  // Mainland castle: much larger and more spread out than before — a
+  // big open grass courtyard with real breathing room between the
+  // profession rooms, plus a dedicated garden (fountain, flowers, a
+  // small bridge over a stream) and a separate graveyard area.
+  var w = 44, h = 40;
+  var g = mkMap(w, h, T.GRASS);
+  for (var c = 0; c < w; c++) { g[0][c] = T.WALL; g[h - 1][c] = T.WALL; }
+  for (var r = 0; r < h; r++) { g[r][0] = T.WALL; g[r][w - 1] = T.WALL; }
+  g[h - 1][22] = T.DOOR; // main gate, south wall, centered
+
+  // Treasure vault — a small sealed room at the very north edge, directly
+  // behind the throne room. Reaching it requires walking around through
+  // the throne room's own back wall opening. Chests inside are guarded:
+  // taking one summons elite guards, far stronger than an ordinary rare
+  // town scuffle.
+  carveRoom(g, 18, 1, 8, 5, "S", 4);
+  var vaultChestSpots = [[19, 2], [21, 2], [23, 2], [20, 4]];
+  vaultChestSpots.forEach(function (spot) { g[spot[1]][spot[0]] = T.CHEST; });
+
+  // Throne room — north side, largest room, King inside, directly south
+  // of (and connected to) the vault above
+  carveRoom(g, 15, 6, 14, 8, "S", 7);
+  g[6][22] = T.FLOOR; // punch through the throne room's own north wall so
+  // it actually connects to the vault's door directly above it — the
+  // two rooms would otherwise share a solid wall with no way through
+  g[10][22] = T.KING;
+
+  // Weaponsmith — far west (shopkeeper wanders the room; not a fixed tile)
+  carveRoom(g, 3, 18, 8, 6, "E", 3);
+
+  // Armory — far east, mirrors the weaponsmith (shopkeeper wanders too)
+  carveRoom(g, 33, 18, 8, 6, "W", 3);
+
+  // Tavern — southwest, well clear of the weaponsmith
+  carveRoom(g, 3, 29, 9, 7, "N", 4);
+  g[35][7] = T.TAVERN;
+
+  // Healer / hospital — southeast, mirrors the tavern
+  carveRoom(g, 32, 29, 9, 7, "N", 4);
+  g[32][36] = T.HEALER;
+  g[31][34] = T.BED;
+  g[31][38] = T.BED;
+  g[33][34] = T.BED;
+  g[33][38] = T.BED;
+
+  // Stable — south-center, between tavern and healer
+  carveRoom(g, 18, 30, 8, 6, "N", 4);
+  g[34][22] = T.STABLE;
+
+  // ---------- Garden — its own walled-off area, west-center, between the
+  // throne room and the tavern, with the new ornate fountain, flowers,
+  // and a small stream crossed by a bridge ----------
+  carveRoom(g, 3, 7, 10, 10, "S", 5);
+  for (var gr = 8; gr < 16; gr++) {
+    for (var gc = 4; gc < 12; gc++) {
+      if (g[gr][gc] === T.FLOOR) g[gr][gc] = T.GRASS; // grass floor, not stone, inside the garden
+    }
+  }
+  // a short stream running through the garden, with a bridge crossing it
+  for (var sr = 9; sr < 15; sr++) g[sr][8] = T.WATER;
+  g[12][8] = T.BRIDGE;
+  g[11][6] = T.GARDEN_FOUNTAIN;
+
+  // ---------- Graveyard — its own walled area, east-center, mirroring
+  // the garden, with a scatter of graves ----------
+  carveRoom(g, 31, 7, 10, 10, "S", 5);
+  for (var vr = 8; vr < 16; vr++) {
+    for (var vc = 32; vc < 40; vc++) {
+      if (g[vr][vc] === T.FLOOR) g[vr][vc] = T.GRASS;
+    }
+  }
+  var graveSpots = [[34, 9], [36, 10], [38, 9], [34, 13], [37, 13], [35, 11]];
+  graveSpots.forEach(function (spot) { g[spot[1]][spot[0]] = T.GRAVE; });
+  var mournerSpots = [[35, 10], [37, 10]];
+  mournerSpots.forEach(function (spot) {
+    if (g[spot[1]][spot[0]] === T.GRASS) g[spot[1]][spot[0]] = T.MOURNER;
+  });
+
+  // scattered courtyard trees, with a dense cluster specifically placed
+  // to obscure the OLD hidden fountain spot no longer used — trees here
+  // are now just general courtyard atmosphere since the garden fountain
+  // has its own dedicated garden room instead of being hidden in the open
+  var seed = 42;
+  function rand() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+  for (var tr = 0; tr < 20; tr++) {
+    var tx = 14 + Math.floor(rand() * (w - 28));
+    var ty = 12 + Math.floor(rand() * (h - 24));
+    if (g[ty][tx] === T.GRASS) g[ty][tx] = T.FOREST;
+  }
+
+  return g;
+}
+
+function buildDungeon() {
+  var w = 22, h = 16;
+  var g = mkMap(w, h, T.WALL);
+  for (var r = 1; r < h - 1; r++) for (var c = 1; c < 9; c++) g[r][c] = T.FLOOR;
+  for (var c2 = 9; c2 < w - 1; c2++) g[7][c2] = T.FLOOR;
+  for (var r2 = 1; r2 < h - 1; r2++) for (var c3 = 13; c3 < w - 1; c3++) g[r2][c3] = T.FLOOR;
+  g[1][1] = T.DOOR;
+  return g;
+}
+
+// ---------- the special island, only reachable by ship ----------
+var ISLAND_W = 50, ISLAND_H = 40;
+function buildIslandOverworld() {
+  var g = mkMap(ISLAND_W, ISLAND_H, T.WATER);
+  var seed = 77;
+  function rand() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+  var isOpenWater = function (t) { return t === T.WATER; };
+  var isOpenLand = function (t) { return t === T.GRASS; };
+
+  // grow one big landmass roughly in the middle of this much larger grid
+  var midR = Math.floor(ISLAND_H / 2), midC = Math.floor(ISLAND_W / 2);
+  growBlob(g, ISLAND_W, ISLAND_H, midR, midC, T.GRASS, Math.floor(ISLAND_W * ISLAND_H * 0.35), rand, isOpenWater);
+
+  // a mountain range or two, giving the island some real terrain variety
+  for (var mr = 0; mr < 2; mr++) {
+    var startRow = midR - 12 + Math.floor(rand() * 24);
+    var startCol = midC - 15 + Math.floor(rand() * 30);
+    var chainLen = 3 + Math.floor(rand() * 3);
+    for (var seg = 0; seg < chainLen; seg++) {
+      growBlob(g, ISLAND_W, ISLAND_H, startRow, startCol, T.MOUNTAIN, 4 + Math.floor(rand() * 5), rand, isOpenLand);
+      startRow += Math.floor(rand() * 3) - 1;
+      startCol += Math.floor(rand() * 3) - 1;
+    }
+  }
+
+  // several forest patches — enough real cover that a hidden portal
+  // genuinely disappears into one of them
+  for (var fp = 0; fp < 7; fp++) {
+    var fr = midR - 14 + Math.floor(rand() * 28);
+    var fc = midC - 18 + Math.floor(rand() * 36);
+    growBlob(g, ISLAND_W, ISLAND_H, fr, fc, T.FOREST, 8 + Math.floor(rand() * 10), rand, isOpenLand);
+  }
+
+  // town entrance roughly centered on the landmass
+  if (g[midR][midC] !== T.GRASS) g[midR][midC] = T.GRASS;
+  g[midR][midC] = T.TOWN;
+
+  placePortalInForest(g, rand);
+  placeOneHut(g, rand, T.GRASS, ISLAND_W, ISLAND_H, midR, midC, 10);
+  return g;
+}
+
+// Places a single hut on a random walkable tile of the given type — a
+// lighter-weight version of placeScatteredLandmarks for smaller maps.
+function placeOneHut(g, rand, openTile, w, h, avoidR, avoidC, minDist) {
+  for (var tries = 0; tries < 300; tries++) {
+    var r = 2 + Math.floor(rand() * (h - 4));
+    var c = 2 + Math.floor(rand() * (w - 4));
+    if (g[r][c] !== openTile) continue;
+    if (minDist && avoidR !== undefined) {
+      var d = Math.sqrt((r - avoidR) * (r - avoidR) + (c - avoidC) * (c - avoidC));
+      if (d < minDist) continue;
+    }
+    g[r][c] = T.HUT;
+    return;
+  }
+}
+
+// Hides the magic portal somewhere inside one of the island's forest
+// patches — picks a random FOREST tile so it's genuinely tucked away,
+// same spirit as the mainland fountain's tree-hidden placement.
+function placePortalInForest(g, rand) {
+  var candidates = [];
+  for (var r = 1; r < ISLAND_H - 1; r++) {
+    for (var c = 1; c < ISLAND_W - 1; c++) {
+      if (g[r][c] === T.FOREST) candidates.push({ r: r, c: c });
+    }
+  }
+  if (candidates.length === 0) return;
+  var pick = candidates[Math.floor(rand() * candidates.length)];
+  g[pick.r][pick.c] = T.PORTAL;
+}
+
+function buildIslandTown() {
+  // Port Reverie: a scrappier coastal village, deliberately asymmetric and
+  // irregular so it reads as a different place from the mainland's formal
+  // castle courtyard — rooms cluster off one side rather than mirroring
+  // each other, and open sandy ground stands in for the grass courtyard.
+  var w = 22, h = 18;
+  var g = mkMap(w, h, T.SAND);
+  for (var c = 0; c < w; c++) { g[0][c] = T.WALL; g[h - 1][c] = T.WALL; }
+  for (var r = 0; r < h; r++) { g[r][0] = T.WALL; g[r][w - 1] = T.WALL; }
+  g[h - 1][11] = T.DOOR; // gate, south wall
+
+  // Harbor master's hall (this island's "throne room") — tucked in the
+  // north-west corner rather than centered
+  carveRoom(g, 2, 1, 7, 5, "S", 3);
+  g[3][5] = T.KING;
+
+  // Weaponsmith — north-east, offset and smaller than the mainland's
+  // (shopkeeper wanders the room; not a fixed tile)
+  carveRoom(g, 14, 2, 6, 4, "S", 3);
+
+  // Armory shares a wall with the weaponsmith, further east
+  carveRoom(g, 14, 7, 6, 4, "W", 2);
+
+  // Tavern — south-west, close to the gate
+  carveRoom(g, 2, 10, 7, 6, "E", 3);
+  g[13][5] = T.TAVERN;
+
+  // Healer's hut — small, standalone near the middle-south
+  carveRoom(g, 10, 12, 5, 4, "N", 2);
+  g[14][12] = T.HEALER;
+  g[13][11] = T.BED;
+
+  // scattered palm-like forest clumps (irregular, coastal feel) with the
+  // fountain hidden off in a quiet corner behind them, not centered like
+  // the mainland's
+  var seed = 91;
+  function rand() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+  for (var tr = 0; tr < 10; tr++) {
+    var tx = 2 + Math.floor(rand() * (w - 4));
+    var ty = 8 + Math.floor(rand() * (h - 10));
+    if (g[ty][tx] === T.SAND) g[ty][tx] = T.FOREST;
+  }
+  var fountainX = 18, fountainY = 14;
+  var hideSpots2 = [[-1, 0], [1, 0], [0, -1], [0, 1], [1, -1]];
+  hideSpots2.forEach(function (d) {
+    var hx = fountainX + d[0], hy = fountainY + d[1];
+    if (g[hy] && g[hy][hx] === T.SAND) g[hy][hx] = T.FOREST;
+  });
+  g[fountainY][fountainX] = T.FOUNTAIN;
+
+  return g;
+}
+
+var overworldGrid = buildOverworld();
+var townGrid = buildTown();
+var dungeonGrid = buildDungeon();
+var islandGrid = buildIslandOverworld();
+var islandTownGrid = buildIslandTown();
+placeIslandEntry();
+
+// ---------- the moon world, reached only through the hidden portal ----------
+var MOON_W = 30, MOON_H = 24;
+var ROCKET_MOON_PAD = null; // fixed {x,y} near the moon castle, set below once buildMoonWorld() runs
+function buildMoonWorld() {
+  // mostly mountains and grey grass, deliberately no trees at all —
+  // a barren, alien landscape
+  var g = mkMap(MOON_W, MOON_H, T.MOON_GRASS);
+  var seed = 133;
+  function rand() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+  var isOpen = function (t) { return t === T.MOON_GRASS; };
+  for (var mr = 0; mr < 5; mr++) {
+    var startRow = 2 + Math.floor(rand() * (MOON_H - 4));
+    var startCol = 2 + Math.floor(rand() * (MOON_W - 4));
+    var chainLen = 3 + Math.floor(rand() * 4);
+    for (var seg = 0; seg < chainLen; seg++) {
+      growBlob(g, MOON_W, MOON_H, startRow, startCol, T.MOUNTAIN, 4 + Math.floor(rand() * 6), rand, isOpen);
+      startRow += Math.floor(rand() * 3) - 1;
+      startCol += Math.floor(rand() * 3) - 1;
+    }
+  }
+  var midR = Math.floor(MOON_H / 2), midC = Math.floor(MOON_W / 2);
+  if (g[midR][midC] !== T.MOON_GRASS) g[midR][midC] = T.MOON_GRASS;
+  g[midR][midC] = T.TOWN;
+  // the return portal sits right where the player first arrives
+  g[midR + 2][midC] = T.MOON_PORTAL;
+  // fixed rocket landing pad, right next to the moon's castle/town —
+  // this exact spot is where a flown-in rocket always parks, and the
+  // only place on the moon you can board one to fly home
+  ROCKET_MOON_PAD = { x: midC + 2, y: midR };
+  if (g[ROCKET_MOON_PAD.y][ROCKET_MOON_PAD.x] === T.MOUNTAIN) g[ROCKET_MOON_PAD.y][ROCKET_MOON_PAD.x] = T.MOON_GRASS;
+  placeOneHut(g, rand, T.MOON_GRASS, MOON_W, MOON_H, midR, midC, 6);
+  placeVolcanoes(g, rand, MOON_W, MOON_H, 2);
+  return g;
+}
+
+// Scatters a few volcanoes onto MOUNTAIN tiles — a dangerous variant of
+// mountain terrain rather than a separate landmass feature.
+function placeVolcanoes(g, rand, w, h, count) {
+  var placed = 0, tries = 0;
+  while (placed < count && tries < 500) {
+    tries++;
+    var r = 2 + Math.floor(rand() * (h - 4));
+    var c = 2 + Math.floor(rand() * (w - 4));
+    if (g[r][c] === T.MOUNTAIN) { g[r][c] = T.VOLCANO; placed++; }
+  }
+}
+
+function buildMoonTown() {
+  var w = 14, h = 12;
+  var g = mkMap(w, h, T.FLOOR);
+  for (var c = 0; c < w; c++) { g[0][c] = T.WALL; g[h - 1][c] = T.WALL; }
+  for (var r = 0; r < h; r++) { g[r][0] = T.WALL; g[r][w - 1] = T.WALL; }
+  g[h - 1][7] = T.DOOR;
+  carveRoom(g, 4, 3, 6, 5, "S", 3);
+  g[5][7] = T.MOON_SHOP;
+  return g;
+}
+
+var moonGrid = buildMoonWorld();
+var moonTownGrid = buildMoonTown();
+
+// ---------- hut & church interiors — small one-room buildings you can
+// actually walk into, talk to the occupant, and give a gift ----------
+function buildHutInterior() {
+  var w = 9, h = 8;
+  var g = mkMap(w, h, T.FLOOR);
+  for (var c = 0; c < w; c++) { g[0][c] = T.WALL; g[h - 1][c] = T.WALL; }
+  for (var r = 0; r < h; r++) { g[r][0] = T.WALL; g[r][w - 1] = T.WALL; }
+  g[h - 1][4] = T.DOOR;
+  g[2][4] = T.HUT_NPC;
+  g[2][2] = T.BED;
+  g[2][6] = T.BED;
+  return g;
+}
+function buildChurchInterior() {
+  var w = 11, h = 9;
+  var g = mkMap(w, h, T.FLOOR);
+  for (var c = 0; c < w; c++) { g[0][c] = T.WALL; g[h - 1][c] = T.WALL; }
+  for (var r = 0; r < h; r++) { g[r][0] = T.WALL; g[r][w - 1] = T.WALL; }
+  g[h - 1][5] = T.DOOR;
+  g[2][5] = T.HEALER; // the church's occupant uses the same paid-revive interaction as a healer
+  g[2][2] = T.BED;
+  g[2][8] = T.BED;
+  return g;
+}
+var hutInteriorGrid = buildHutInterior();
+var churchInteriorGrid = buildChurchInterior();
+
+// ---------- alien quest tracking ----------
+var alienEncountersWon = 0;
+var alienQuestComplete = false;
+var ALIEN_DEF = { name: "Alien", hp: 15, dmg: [2, 7], gold: [8, 18], xp: 11 };
+var MOON_ARMOR = { name: "Lunar Plate", defBonus: 6 };
+var QUEST_REWARD_ITEM = { name: "Starforged Blade", dmgBonus: 12 };
+
+// Places the ISLAND marker at a random open-water tile on the main
+// overworld, far enough from the mainland's coastline to feel like a real
+// voyage. Falls back to any water tile if a far one can't be found.
+function placeIslandEntry() {
+  // With the much larger ocean, the island should sit far out from the
+  // mainland — require real distance from the continent's center, not
+  // just barely clear of the coastline, so reaching it is a real voyage.
+  var contCenterR = Math.floor(OW_H / 2), contCenterC = Math.floor(OW_W / 2);
+  var minDistFromCenter = Math.min(OW_W, OW_H) * 0.38; // well out past the continent's edge
+  var candidates = [];
+  for (var r = 2; r < OW_H - 2; r++) {
+    for (var c = 2; c < OW_W - 2; c++) {
+      if (overworldGrid[r][c] !== T.WATER) continue;
+      var distFromCenter = Math.sqrt((r - contCenterR) * (r - contCenterR) + (c - contCenterC) * (c - contCenterC));
+      if (distFromCenter >= minDistFromCenter && farFromLand(r, c, 3)) candidates.push({ r: r, c: c });
+    }
+  }
+  if (candidates.length === 0) {
+    // fall back to "just clear of any coastline" if the distant ring
+    // somehow found nothing (shouldn't normally happen at this map size)
+    for (var r2 = 1; r2 < OW_H - 1; r2++) for (var c2 = 1; c2 < OW_W - 1; c2++) {
+      if (overworldGrid[r2][c2] === T.WATER && farFromLand(r2, c2, 3)) candidates.push({ r: r2, c: c2 });
+    }
+  }
+  if (candidates.length === 0) return;
+  var pick = candidates[Math.floor(Math.random() * candidates.length)];
+  overworldGrid[pick.r][pick.c] = T.ISLAND;
+}
+function farFromLand(r, c, radius) {
+  for (var dr = -radius; dr <= radius; dr++) {
+    for (var dc = -radius; dc <= radius; dc++) {
+      var rr = r + dr, cc = c + dc;
+      if (overworldGrid[rr] && overworldGrid[rr][cc] !== undefined && overworldGrid[rr][cc] !== T.WATER) return false;
+    }
+  }
+  return true;
+}
+
+// ---------- ground items: chests + monster drops, keyed by screen ----------
+// Each entry: { screen: "overworld"|"town"|"dungeon", x, y, kind: "gold"|"item", amount, item }
+var groundItems = [];
+function addGroundItem(screenKey, x, y, entry) {
+  entry.screen = screenKey;
+  entry.x = x; entry.y = y;
+  groundItems.push(entry);
+}
+function groundItemAt(screenKey, x, y) {
+  for (var i = 0; i < groundItems.length; i++) {
+    var g = groundItems[i];
+    if (g.screen === screenKey && g.x === x && g.y === y) return g;
+  }
+  return null;
+}
+function removeGroundItem(entry) {
+  var idx = groundItems.indexOf(entry);
+  if (idx !== -1) groundItems.splice(idx, 1);
+}
+// seed the map chests as ground items instead of a permanent tile type,
+// so they can disappear once looted
+addGroundItem("town", 10, 8, { kind: "gold", amount: null }); // amount rolled on pickup
+addGroundItem("dungeon", 18, 13, { kind: "gold", amount: null });
+
+// ---------- loot tables, tiered by monster strength ----------
+var LOOT_TABLE = {
+  weapon: [
+    { name: "Dagger", dmgBonus: 1, emoji: "🗡️" },
+    { name: "Knife", dmgBonus: 2, emoji: "🔪" },
+    { name: "Pickaxe", dmgBonus: 3, emoji: "⛏️" },
+    { name: "Axe", dmgBonus: 5, emoji: "🪓" },
+    { name: "Sword", dmgBonus: 7, emoji: "⚔️" },
+    { name: "Hammer", dmgBonus: 9, emoji: "🔨" },
+    { name: "Boomerang", dmgBonus: 4, emoji: "🪃", ranged: true, range: 6, returns: true },
+    { name: "Bow", dmgBonus: 6, emoji: "🏹", ranged: true, range: 8 }
+  ],
+  armor: [
+    { name: "Leather Armor", defBonus: 1 },
+    { name: "Chainmail", defBonus: 2 },
+    { name: "Plate Armor", defBonus: 4 }
+  ],
+  potion: [
+    { name: "Minor Potion", heal: 10 },
+    { name: "Potion", heal: 20 },
+    { name: "Greater Potion", heal: 40 }
+  ]
+};
+function rollLootForMonster(monsterTier) {
+  // tier (0-based) picks how far up each loot list we're allowed to roll from
+  if (Math.random() > 0.35) return null; // 35% chance of any drop at all
+  var category = ["weapon", "armor", "potion"][Math.floor(Math.random() * 3)];
+  var list = LOOT_TABLE[category];
+  var maxIdx = Math.min(list.length - 1, monsterTier);
+  var idx = Math.floor(Math.random() * (maxIdx + 1));
+  return { category: category, item: list[idx] };
+}
+
+// ============================================================
+// PARTY / GAME STATE
+// ============================================================
+var party = [
+  { name: "Kestrel", cls: "FTR", mana: 0,  lvl: 1, xp: 0, hp: 32, maxHp: 32, food: 73, color: "#3aa0ff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
+  { name: "Elowen",  cls: "CLR", mana: 14, lvl: 1, xp: 0, hp: 22, maxHp: 22, food: 73, color: "#ffffff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
+  { name: "Rasmus",  cls: "WIZ", mana: 18, lvl: 1, xp: 0, hp: 16, maxHp: 16, food: 73, color: "#ff8833", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
+  { name: "Finn",    cls: "THF", mana: 0,  lvl: 1, xp: 0, hp: 20, maxHp: 20, food: 73, color: "#33cc33", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 }
+];
+var sharedGold = 120;
+var potionCount = 2;
+
+// per-monster-type kill counters -> difficulty tier (every 5 kills = +1 tier)
+var monsterKillCounts = {}; // name -> count
+function killsForTier(name) { return monsterKillCounts[name] || 0; }
+function tierForMonster(name) { return Math.floor(killsForTier(name) / 5); }
+
+var state = {
+  mode: "overworld", // overworld | town | dungeon | island | islandTown | moon | moonTown | combat
+  x: OW_START_X, y: OW_START_Y,
+  facing: "S",
+  fromOverworld: { x: OW_START_X, y: OW_START_Y },
+  fromIsland: { x: 7, y: 1 },
+  fromMoon: { x: 0, y: 0 },
+  fromBuilding: { mode: "overworld", x: 0, y: 0 }, // where to return after leaving a hut/church interior
+  mounted: false,      // riding ANY land vehicle (horse/car/helicopter)
+  vehicleType: null,   // null | "horse" | "car" | "helicopter" — which one specifically
+  sailing: false,      // currently aboard the ship (only true while ON the ship's tile, moving over water)
+  flying: false        // aboard the rocket, en route to/from the moon
+};
+
+// The ship itself: once won, it's a real object with a position on whatever
+// map it's currently sitting in — it stays exactly where you leave it
+// (docked at a shoreline) until you come back and board it again.
+var ship = {
+  owned: false,
+  screen: null, // "overworld" | "island" — which map the ship currently sits on
+  x: 0, y: 0
+};
+
+// The horse, same idea as the ship: once owned, it's a real object with a
+// position — parked wherever the player last dismounted, on whichever
+// map that was (overworld, island, dungeon, moon, or any town/interior).
+var horse = {
+  owned: false,
+  screen: null,
+  x: 0, y: 0
+};
+
+// Car and Helicopter follow the exact same "parked object" pattern as
+// the horse — bought at the Asia castle's stable, one of each at a time,
+// waiting wherever last dismounted.
+var car = { owned: false, screen: null, x: 0, y: 0 };
+var helicopter = { owned: false, screen: null, x: 0, y: 0 };
+
+// The rocket: flies you to the moon world. Unlike the horse/car, it
+// can't be "dismounted" freely wherever you like — it must always stay
+// parked right next to the moon castle, or you could get stranded there
+// with no way back. Buying one places it on the overworld near wherever
+// you bought it; flying to the moon re-parks it at the fixed moon-side
+// pad; flying back re-parks it at the original overworld pad.
+var rocket = { owned: false, screen: null, x: 0, y: 0 };
+// (ROCKET_MOON_PAD is declared up near the other world constants, right
+// before buildMoonWorld() runs — see below — so it's already set by the
+// time this file reaches this point.)
+
+// Only one land vehicle can be ridden at a time. state.vehicleType is
+// null | "horse" | "car" | "helicopter" — state.mounted stays true
+// whenever any of these is active, for backward compatibility with
+// existing mounted-only checks (movement speed, sprite, etc).
+function vehicleSpeed(type) {
+  if (type === "helicopter") return 3;
+  if (type === "car") return 2.5; // rounds down to 2 in practice since movement is tile-based, but kept distinct for future tuning
+  return 2; // horse
+}
+function vehicleObj(type) {
+  if (type === "car") return car;
+  if (type === "helicopter") return helicopter;
+  return horse;
+}
+
+// wandering monsters visible on the map (overworld/dungeon), chasing the
+// player; separate from `combat.monsters` which only exists once a fight
+// has actually started
+var mapMonsters = []; // { name, x, y, screen } — screen is "overworld"|"dungeon"
+
+// Wild horses: rare, non-hostile wandering spots you can approach and try
+// to TAME. They don't chase you like monsters — they just stand there
+// until you either succeed (becomes your mount) or fail (spooks and
+// attacks). One at a time is plenty.
+var wildHorses = []; // { x, y, screen }
+
+// ---------- roaming shopkeepers & stable horses ----------
+// Small wandering entities confined to their own room's interior — they
+// take one random step (or stay put) each time the player moves, and are
+// interacted with by getting adjacent, same as a wandering NPC.
+var roamingNpcs = []; // { x, y, screen, bounds:{x0,y0,x1,y1}, kind: "shop"|"armory" }
+var stableHorses = []; // { x, y, screen, bounds }
+
+function registerRoamingNpc(list, x, y, screen, bounds, kind) {
+  list.push({ x: x, y: y, screen: screen, bounds: bounds, kind: kind });
+}
+
+function stepRoamingEntity(e) {
+  if (e.screen !== state.mode) return;
+  if (Math.random() < 0.5) return; // don't move every single step — feels calmer
+  var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+  var d = dirs[Math.floor(Math.random() * dirs.length)];
+  var nx = e.x + d[0], ny = e.y + d[1];
+  if (nx < e.bounds.x0 || nx > e.bounds.x1 || ny < e.bounds.y0 || ny > e.bounds.y1) return;
+  var t = tileAt(nx, ny);
+  if (t !== T.FLOOR && t !== T.GRASS) return; // stay on open room floor, never through walls/furniture
+  e.x = nx; e.y = ny;
+}
+function stepAllRoamingEntities() {
+  roamingNpcs.forEach(stepRoamingEntity);
+  stableHorses.forEach(stepRoamingEntity);
+}
+function roamingNpcAdjacent() {
+  var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0], [0, 0]];
+  for (var i = 0; i < dirs.length; i++) {
+    var found = roamingNpcs.find(function (e) {
+      return e.screen === state.mode && e.x === state.x + dirs[i][0] && e.y === state.y + dirs[i][1];
+    });
+    if (found) return found;
+  }
+  return null;
+}
+
+// Called once, after every town grid has been built, to populate the
+// roaming shopkeepers and stable horses with the correct room bounds.
+function setupRoamingEntities() {
+  // mainland weaponsmith room: x0=3,y0=18,w=8,h=6 -> interior x:4-9,y:19-22
+  registerRoamingNpc(roamingNpcs, 6, 20, "town", { x0: 4, y0: 19, x1: 9, y1: 22 }, "shop");
+  // mainland armory room: x0=33,y0=18,w=8,h=6 -> interior x:34-39,y:19-22
+  registerRoamingNpc(roamingNpcs, 36, 20, "town", { x0: 34, y0: 19, x1: 39, y1: 22 }, "armory");
+  // mainland stable room: x0=18,y0=30,w=8,h=6 -> interior x:19-24,y:31-34
+  stableHorses.push({ x: 20, y: 32, screen: "town", bounds: { x0: 19, y0: 31, x1: 24, y1: 34 } });
+  stableHorses.push({ x: 23, y: 33, screen: "town", bounds: { x0: 19, y0: 31, x1: 24, y1: 34 } });
+
+  // island weaponsmith room: x0=14,y0=2,w=6,h=4 -> interior x:15-18,y:3-4
+  registerRoamingNpc(roamingNpcs, 16, 3, "islandTown", { x0: 15, y0: 3, x1: 18, y1: 4 }, "shop");
+  // island armory room: x0=14,y0=7,w=6,h=4 -> interior x:15-18,y:8-9
+  registerRoamingNpc(roamingNpcs, 17, 8, "islandTown", { x0: 15, y0: 8, x1: 18, y1: 9 }, "armory");
+}
+setupRoamingEntities();
+function trySpawnWildHorse() {
+  if (state.mode !== "overworld") return;
+  if (wildHorses.some(function (h) { return h.screen === "overworld"; })) return; // only one at a time
+  if (Math.random() < 0.004) {
+    var hx = state.x + (Math.random() < 0.5 ? -1 : 1) * (3 + Math.floor(Math.random() * 3));
+    var hy = state.y + (Math.random() < 0.5 ? -1 : 1) * (3 + Math.floor(Math.random() * 3));
+    if (isWalkable(tileAt(hx, hy)) && tileAt(hx, hy) === T.GRASS) {
+      wildHorses.push({ x: hx, y: hy, screen: "overworld" });
+    }
+  }
+}
+// Returns a tameable target if a wild horse (dynamic wanderer OR the
+// static map landmark) is in an adjacent tile, else null. `kind` tells
+// cmdTame how to clean it up afterward.
+function wildHorseAdjacent() {
+  var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+  for (var i = 0; i < dirs.length; i++) {
+    var hx = state.x + dirs[i][0], hy = state.y + dirs[i][1];
+    var found = wildHorses.find(function (h) { return h.screen === state.mode && h.x === hx && h.y === hy; });
+    if (found) return { kind: "wanderer", horse: found };
+    if (tileAt(hx, hy) === T.HORSE) return { kind: "landmark", x: hx, y: hy };
+  }
+  return null;
+}
+var WILD_HORSE_DEF = { name: "Wild Horse", hp: 12, dmg: [1, 4], gold: [0, 3], xp: 4 };
+function cmdTame() {
+  var target = wildHorseAdjacent();
+  if (!target) { pushLog("No wild horse nearby."); renderAll(); return; }
+  if (target.kind === "wanderer") {
+    wildHorses = wildHorses.filter(function (h) { return h !== target.horse; });
+  } else {
+    currentGrid()[target.y][target.x] = T.GRASS; // the landmark horse is now "gone" either way
+  }
+  if (Math.random() < 0.3) {
+    state.mounted = true;
+    state.vehicleType = "horse";
+    pushLog("You calm the wild horse and it accepts you. Mounted!");
+    renderAll();
+  } else {
+    pushLog("The horse spooks and turns on you!");
+    var instance = makeMonsterInstance(WILD_HORSE_DEF, 0, 0);
+    enterArena([instance], state.mode, null);
+  }
+}
+
+// ---------- wind ----------
+// Wind blows from one of 4 directions (or calm/none) and shifts randomly
+// every 3-7 sailing moves. Moving WITH the wind is fast, AGAINST it is
+// slow, calm means you can't move at all that turn, and perpendicular or
+// no-wind-set has no effect.
+var WIND_DIRS = ["N", "S", "E", "W", "CALM"];
+var wind = { dir: "N", movesLeft: 5 };
+function rollWindDuration() { return 3 + Math.floor(Math.random() * 5); } // 3-7 inclusive
+function maybeShiftWind() {
+  wind.movesLeft--;
+  if (wind.movesLeft <= 0) {
+    wind.dir = WIND_DIRS[Math.floor(Math.random() * WIND_DIRS.length)];
+    wind.movesLeft = rollWindDuration();
+    var windLabel = wind.dir === "CALM" ? "The wind dies. Dead calm." : "The wind shifts to the " + facingWord(wind.dir) + ".";
+    pushLog(windLabel);
+  }
+}
+// How a sailing step in direction `dir` is affected by the current wind.
+// Returns { tiles: N, blocked: bool } — tiles is how many steps to attempt
+// this press (2 = with the wind, 1 = neutral), and blocked/slip covers the
+// two slow cases: dead calm (can't move at all) and sailing dead against
+// the wind (50% chance the step just doesn't happen, like wading through
+// forest) since a grid can't literally move half a tile.
+function sailSpeedFor(dir) {
+  if (wind.dir === "CALM") return { tiles: 0, blocked: true };
+  if (wind.dir === dir) return { tiles: 2, blocked: false };
+  var opposite = { N: "S", S: "N", E: "W", W: "E" };
+  if (opposite[wind.dir] === dir) return { tiles: 1, blocked: Math.random() < 0.5 };
+  return { tiles: 1, blocked: false };
+}
+
+// Checks whether the player is currently at or adjacent to a given tile
+// type — used to gate terrain-specific monster spawns (forest/mountain
+// creatures shouldn't appear out in open plains, etc).
+function nearTileType(tileType) {
+  if (tileAt(state.x, state.y) === tileType) return true;
+  var deltas = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  for (var i = 0; i < deltas.length; i++) {
+    if (tileAt(state.x + deltas[i][0], state.y + deltas[i][1]) === tileType) return true;
+  }
+  return false;
+}
+
+function spawnMapMonster(screenKey) {
+  // While sailing, wandering encounters draw from the aquatic pool —
+  // land monsters never spawn out on the open water. The Kraken is a
+  // rare, much tougher mini-boss variant of that same aquatic encounter.
+  // In the dungeon, Wizard or Bat can appear instead of the land pool.
+  // Near forest/mountain terrain, a chance of Giant Wasp/Monkey (forest),
+  // Giant Eagle/Yeti (forest or mountain) instead of the general pool.
+  var def;
+  if (state.sailing) {
+    def = Math.random() < 0.06 ? KRAKEN_DEF : SEA_SERPENT_DEF;
+  } else if (screenKey === "dungeon" && Math.random() < 0.35) {
+    def = Math.random() < 0.5 ? WIZARD_DEF : BAT_DEF;
+  } else if (nearTileType(T.FOREST) && Math.random() < 0.3) {
+    var forestPool = [GIANT_WASP_DEF, MONKEY_DEF, GIANT_EAGLE_DEF, YETI_DEF];
+    def = forestPool[Math.floor(Math.random() * forestPool.length)];
+  } else if (nearTileType(T.MOUNTAIN) && Math.random() < 0.3) {
+    var mountainPool = [GIANT_EAGLE_DEF, YETI_DEF];
+    def = mountainPool[Math.floor(Math.random() * mountainPool.length)];
+  } else {
+    def = MONSTER_DEFS[Math.floor(Math.random() * MONSTER_DEFS.length)];
+  }
+  var mx = state.x + (Math.random() < 0.5 ? -1 : 1) * (2 + Math.floor(Math.random() * 2));
+  var my = state.y + (Math.random() < 0.5 ? -1 : 1) * (2 + Math.floor(Math.random() * 2));
+  mapMonsters.push({ name: def.name, x: mx, y: my, screen: screenKey, aquatic: !!def.aquatic });
+}
+
+// Moves each wandering monster one step toward the player. If a monster
+// reaches the player's tile, combat begins immediately.
+// Whether a specific wandering monster can step onto a given tile type —
+// land monsters can never enter water/island tiles, only true aquatic
+// monsters (Sea Serpents) can, regardless of whether the player happens
+// to be sailing at the time.
+function monsterCanEnter(m, t) {
+  if (t === null || t === T.MOUNTAIN || t === T.WALL) return false;
+  if (t === T.WATER || t === T.ISLAND) return !!m.aquatic;
+  return true;
+}
+
+function stepMapMonsters() {
+  var screenKey = state.mode; // "overworld", "dungeon", or "island"
+  var stillAlive = [];
+  for (var i = 0; i < mapMonsters.length; i++) {
+    var m = mapMonsters[i];
+    if (m.screen !== screenKey) { stillAlive.push(m); continue; }
+    var dx = state.x - m.x, dy = state.y - m.y;
+    var stepX = dx === 0 ? 0 : (dx > 0 ? 1 : -1);
+    var stepY = dy === 0 ? 0 : (dy > 0 ? 1 : -1);
+    // move on whichever axis has the larger gap, one tile per turn
+    if (Math.abs(dx) >= Math.abs(dy) && stepX !== 0) {
+      var nx = m.x + stepX;
+      var nt = tileAt(nx, m.y);
+      if (monsterCanEnter(m, nt) && !(nt === T.FOREST && Math.random() < 0.5)) m.x = nx;
+    } else if (stepY !== 0) {
+      var ny = m.y + stepY;
+      var nt2 = tileAt(m.x, ny);
+      if (monsterCanEnter(m, nt2) && !(nt2 === T.FOREST && Math.random() < 0.5)) m.y = ny;
+    }
+    if (m.x === state.x && m.y === state.y) {
+      startCombatWithMonster(m, screenKey);
+      continue; // this monster is now "in combat", drop from the wandering list
+    }
+    stillAlive.push(m);
+  }
+  mapMonsters = stillAlive;
+}
+
+var combat = null;
+var log = [];
+function pushLog(msg) {
+  log.push(msg);
+  if (log.length > 200) log.shift();
+}
+pushLog("-----Welcome-----");
+pushLog("Arrows move. G/C/S/R commands.");
+
+var MONSTER_DEFS = [
+  { name: "Orc", hp: 10, dmg: [1, 5], gold: [3, 10], xp: 6 },
+  { name: "Skeleton", hp: 8, dmg: [1, 4], gold: [2, 8], xp: 5 },
+  { name: "Giant Rat", hp: 6, dmg: [1, 3], gold: [1, 5], xp: 3 },
+  { name: "Snake", hp: 7, dmg: [1, 4], gold: [1, 6], xp: 4 },
+  { name: "Troll", hp: 16, dmg: [2, 8], gold: [5, 14], xp: 9 },
+  { name: "Vampire", hp: 12, dmg: [2, 7], gold: [6, 16], xp: 10 },
+  { name: "Zombie", hp: 14, dmg: [1, 5], gold: [2, 8], xp: 6 },
+  { name: "Genie", hp: 10, dmg: [2, 6], gold: [8, 20], xp: 8 },
+  { name: "Fairy", hp: 5, dmg: [1, 3], gold: [3, 10], xp: 5 },
+  { name: "Scorpion", hp: 8, dmg: [2, 6], gold: [1, 5], xp: 5 },
+  { name: "Wolf", hp: 9, dmg: [2, 6], gold: [1, 5], xp: 6 }
+];
+// Wizards only appear in the dungeon — a ranged caster archetype: lower
+// HP than most, but hits harder since it never has to close to melee.
+var WIZARD_DEF = { name: "Wizard", hp: 7, dmg: [3, 9], gold: [4, 12], xp: 9, ranged: true };
+// Bats are dungeon-only, like Wizards.
+var BAT_DEF = { name: "Bat", hp: 6, dmg: [1, 4], gold: [1, 4], xp: 4 };
+// Giant Wasp, Giant Eagle, and Monkey are terrain-gated: they only spawn
+// when the player is at/near forest or mountain tiles.
+var GIANT_WASP_DEF = { name: "Giant Wasp", hp: 5, dmg: [1, 5], gold: [1, 4], xp: 4 };
+var GIANT_EAGLE_DEF = { name: "Giant Eagle", hp: 11, dmg: [2, 6], gold: [2, 8], xp: 7 };
+var MONKEY_DEF = { name: "Monkey", hp: 6, dmg: [1, 3], gold: [2, 9], xp: 4 };
+var YETI_DEF = { name: "Yeti", hp: 18, dmg: [3, 9], gold: [5, 15], xp: 12 };
+// The Kraken is a rare ocean mini-boss — noticeably tougher than the
+// Sea Serpent, encountered far less often.
+var KRAKEN_DEF = { name: "Kraken", hp: 32, dmg: [4, 12], gold: [20, 45], xp: 22, aquatic: true };
+// Phoenix spawns near volcanoes — guaranteed the first time you approach
+// any volcano, rare after that. Defeating it drops the Fire Bow, which
+// auto-equips to the party leader immediately.
+var PHOENIX_DEF = { name: "Phoenix", hp: 20, dmg: [3, 10], gold: [15, 30], xp: 18 };
+var FIRE_BOW = { name: "Fire Bow", dmgBonus: 8, emoji: "🏹", ranged: true, range: 7 };
+var seenAnyVolcano = false; // tracks whether the guaranteed first Phoenix has already happened
+// Sea Serpents are the only wandering monster that can enter/patrol water —
+// everything else is land-bound and will never chase you out onto the ocean.
+var SEA_SERPENT_DEF = { name: "Sea Serpent", hp: 16, dmg: [2, 8], gold: [5, 15], xp: 9, aquatic: true };
+// Pirates only appear via the dedicated water encounter (not the general
+// wandering-monster pool) — winning grants a ship.
+var PIRATE_DEF = { name: "Pirate", hp: 14, dmg: [2, 7], gold: [10, 25], xp: 10 };
+// Guards only appear via the rare town-trouble encounter (stealing,
+// bothering NPCs, drunks) and fight in the brick/castle-style arena.
+var GUARD_DEF = { name: "Guard", hp: 20, dmg: [2, 8], gold: [0, 5], xp: 12 };
+// Elite vault guards — summoned the instant a treasure chest behind the
+// King is looted. Much tougher than a regular town guard: high HP, and
+// hits hard enough that a careless party can be in real trouble.
+var ELITE_GUARD_DEF = { name: "Elite Guard", hp: 60, dmg: [10, 25], gold: [0, 10], xp: 40 };
+
+function rollRange(r) { return r[0] + Math.floor(Math.random() * (r[1] - r[0] + 1)); }
+
+// Small chance per step while standing next to water to run into pirates.
+// Winning grants ownership of the ship (parked at the fight's location)
+// so the party can board it and sail from then on.
+function tryPirateEncounter() {
+  if ((state.mode !== "overworld" && state.mode !== "island") || ship.owned) return;
+  if (!hasAdjacentWater(currentGrid(), state.y, state.x)) return;
+  if (Math.random() < 0.03) {
+    var group = buildMonsterGroup(PIRATE_DEF, true);
+    enterArena(group, state.mode, "pirate");
+  }
+}
+
+// ---------- ocean hazards: tornado (persistent, wanders) and tsunami
+// (one-off wave) — both deal 50% of current HP to the whole party ----------
+var tornadoes = []; // { x, y, screen } — wander randomly each sailing step
+
+function applyHazardDamage(label) {
+  pushLog("-----" + label + "!-----");
+  party.forEach(function (p) {
+    if (!p.alive) return;
+    var dmg = Math.floor(p.hp * 0.5);
+    p.hp -= dmg;
+    if (p.hp <= 0) { p.hp = 0; p.alive = false; pushLog(p.name + " has fallen!"); }
+  });
+  pushLog("The " + label.toLowerCase() + " batters the ship — the party takes heavy damage!");
+}
+
+function tryOceanHazard() {
+  // wandering tornadoes: move randomly, and strike if they land on you
+  tornadoes.forEach(function (t) {
+    if (t.screen !== state.mode) return;
+    var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+    var d = dirs[Math.floor(Math.random() * dirs.length)];
+    var nx = t.x + d[0], ny = t.y + d[1];
+    if (tileAt(nx, ny) === T.WATER) { t.x = nx; t.y = ny; }
+    if (t.x === state.x && t.y === state.y) applyHazardDamage("Tornado");
+  });
+  // occasionally spawn a new tornado nearby
+  if (Math.random() < 0.004 && !tornadoes.some(function (t) { return t.screen === state.mode; })) {
+    tornadoes.push({ x: state.x + (Math.random() < 0.5 ? -3 : 3), y: state.y, screen: state.mode });
+    pushLog("A tornado forms on the horizon!");
+  }
+  // tsunami: a one-off wave with no persistent presence
+  if (Math.random() < 0.004) {
+    applyHazardDamage("Tsunami");
+  }
+  if (!partyAlive()) {
+    pushLog("-----Party defeated-----");
+    party[0].alive = true; party[0].hp = party[0].maxHp;
+    sharedGold = Math.floor(sharedGold * 0.5);
+    // the ship stays parked exactly where the party went down — same
+    // rule as disembarking normally — since we're being yanked into a
+    // town and can't still be "sailing" once there
+    if (state.sailing) {
+      ship.owned = true; ship.screen = state.mode; ship.x = state.x; ship.y = state.y;
+      state.sailing = false;
+    }
+    respawnAfterDefeat();
+  }
+}
+
+// Alien encounters only happen out on the moon's surface. Each defeated
+// group counts toward the 3-encounter quest; once alienQuestComplete is
+// true, encounters can keep happening (they're just regular fights then).
+function tryAlienEncounter() {
+  if (state.mode !== "moon") return;
+  if (Math.random() < 0.05) {
+    var group = buildMonsterGroup(ALIEN_DEF, true);
+    enterArena(group, state.mode, "alien");
+  }
+}
+
+// Builds a live monster instance scaled by that monster type's current tier.
+function makeMonsterInstance(def, x, y) {
+  var tier = tierForMonster(def.name);
+  var hpMul = 1 + tier * 0.5;
+  var dmgMul = 1 + tier * 0.3;
+  return {
+    name: def.name,
+    baseName: def.name,
+    tier: tier,
+    hp: Math.round(def.hp * hpMul),
+    maxHp: Math.round(def.hp * hpMul),
+    dmg: [Math.max(1, Math.round(def.dmg[0] * dmgMul)), Math.max(1, Math.round(def.dmg[1] * dmgMul))],
+    gold: [Math.round(def.gold[0] * (1 + tier * 0.4)), Math.round(def.gold[1] * (1 + tier * 0.4))],
+    xp: Math.round(def.xp * (1 + tier * 0.4)),
+    x: x, y: y
+  };
+}
+
+function currentGrid() {
+  if (state.mode === "town") return townGrid;
+  if (state.mode === "dungeon") return dungeonGrid;
+  if (state.mode === "island") return islandGrid;
+  if (state.mode === "islandTown") return islandTownGrid;
+  if (state.mode === "moon") return moonGrid;
+  if (state.mode === "moonTown") return moonTownGrid;
+  if (state.mode === "hutInterior") return hutInteriorGrid;
+  if (state.mode === "churchInterior") return churchInteriorGrid;
+  return overworldGrid;
+}
+function gridDims() {
+  var g = currentGrid();
+  return { w: g[0].length, h: g.length };
+}
+function tileAt(x, y) {
+  var g = currentGrid();
+  var d = gridDims();
+  // The main overworld wraps around like a globe — sail (or walk) off one
+  // edge and you appear on the opposite side. Every other map (town,
+  // dungeon, island interior) stays a normal bounded room.
+  if (state.mode === "overworld") {
+    x = ((x % d.w) + d.w) % d.w;
+    y = ((y % d.h) + d.h) % d.h;
+    return g[y][x];
+  }
+  if (x < 0 || y < 0 || x >= d.w || y >= d.h) return null;
+  return g[y][x];
+}
+
+// Normalizes a coordinate pair the same way tileAt does, for actually
+// committing to state.x/state.y (not just reading a tile) — without this,
+// the player's own position would drift into unwrapped negative/overflow
+// values even though tileAt() would still happen to read correctly.
+function wrapPos(x, y) {
+  if (state.mode !== "overworld") return { x: x, y: y };
+  return { x: ((x % OW_W) + OW_W) % OW_W, y: ((y % OW_H) + OW_H) % OW_H };
+}
+function isWalkable(t) {
+  if (t === null) return false;
+  var flyingFreely = state.mounted && state.vehicleType === "helicopter";
+  if (t === T.WATER) return state.sailing || flyingFreely; // ship, or helicopter flying over it
+  if (t === T.ISLAND) return state.sailing || flyingFreely;
+  if (t === T.MOUNTAIN) return flyingFreely; // helicopter is the only thing that can cross mountains
+  if (t === T.VOLCANO) return flyingFreely; // impassable on foot, just like a mountain
+  if (t === T.WALL) return false;
+  if (t === T.FOREST && state.mounted && state.vehicleType !== "helicopter") return false; // horses/cars can't push through forest, helicopter flies over
+  return true;
+}
+
+// Volcano is dangerous even from next to it, not just standing on it —
+// checked every step while outdoors.
+function tryVolcanoBurn() {
+  if (state.mode !== "overworld" && state.mode !== "island" && state.mode !== "moon") return;
+  var deltas = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]];
+  for (var i = 0; i < deltas.length; i++) {
+    if (tileAt(state.x + deltas[i][0], state.y + deltas[i][1]) === T.VOLCANO) {
+      // Phoenix: guaranteed the very first time any volcano is approached,
+      // rare after that. Takes priority over the burn damage that same
+      // step — getting ambushed AND scorched at once would be excessive.
+      var phoenixChance = seenAnyVolcano ? 0.08 : 1;
+      seenAnyVolcano = true;
+      if (Math.random() < phoenixChance) {
+        pushLog("-----A Phoenix rises from the flames!-----");
+        var group = buildMonsterGroup(PHOENIX_DEF, true);
+        enterArena(group, state.mode, "phoenix");
+        return;
+      }
+      pushLog("-----Volcano!-----");
+      party.forEach(function (p) {
+        if (!p.alive) return;
+        var dmg = 3 + Math.floor(Math.random() * 8);
+        p.hp -= dmg;
+        if (p.hp <= 0) { p.hp = 0; p.alive = false; pushLog(p.name + " has fallen!"); }
+      });
+      pushLog("The heat scorches the party!");
+      if (!partyAlive()) {
+        pushLog("-----Party defeated-----");
+        party[0].alive = true; party[0].hp = party[0].maxHp;
+        sharedGold = Math.floor(sharedGold * 0.5);
+        respawnAfterDefeat();
+      }
+      return; // only one burn per step, even if somehow adjacent to two
+    }
+  }
+}
+
+// ============================================================
+// CANVAS SETUP
+// ============================================================
+var canvas = document.getElementById("gameCanvas");
+var ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+
+function resizeCanvasCss() {
+  var wrap = document.getElementById("canvasWrap");
+  var maxW = wrap.clientWidth, maxH = wrap.clientHeight;
+  // Fractional scaling (not integer-only) so the canvas fills the
+  // available space tightly. imageSmoothingEnabled stays false and all
+  // drawing is done with flat fills/strokes (no photographic bitmaps),
+  // so fractional scale doesn't introduce blur here.
+  var scale = Math.max(0.1, Math.min(maxW / LW, maxH / LH));
+  canvas.style.width = (LW * scale) + "px";
+  canvas.style.height = (LH * scale) + "px";
+}
+
+function px(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w, h);
+}
+
+// ============================================================
+// DECORATIVE BORDER (purple frame with corner/edge chevrons,
+// like the reference screenshots)
+// ============================================================
+function drawChevron(cx, cy, dir, size, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  if (dir === "up") {
+    ctx.moveTo(cx, cy - size); ctx.lineTo(cx + size, cy + size); ctx.lineTo(cx - size, cy + size);
+  } else if (dir === "down") {
+    ctx.moveTo(cx, cy + size); ctx.lineTo(cx + size, cy - size); ctx.lineTo(cx - size, cy - size);
+  } else if (dir === "left") {
+    ctx.moveTo(cx - size, cy); ctx.lineTo(cx + size, cy - size); ctx.lineTo(cx + size, cy + size);
+  } else {
+    ctx.moveTo(cx + size, cy); ctx.lineTo(cx - size, cy - size); ctx.lineTo(cx - size, cy + size);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawMapBorder() {
+  // border ring
+  px(MAP_X0, MAP_Y0, MAP_OUTER_W, BORDER, PAL.purple); // top
+  px(MAP_X0, MAP_Y0 + MAP_OUTER_H - BORDER, MAP_OUTER_W, BORDER, PAL.purple); // bottom
+  px(MAP_X0, MAP_Y0, BORDER, MAP_OUTER_H, PAL.purple); // left
+  px(MAP_X0 + MAP_OUTER_W - BORDER, MAP_Y0, BORDER, MAP_OUTER_H, PAL.purple); // right
+
+  // corner chevrons pointing outward, and edge-midpoint chevrons like reference
+  var midX = MAP_X0 + MAP_OUTER_W / 2;
+  var midY = MAP_Y0 + MAP_OUTER_H / 2;
+  drawChevron(midX, MAP_Y0 - 2, "up", 8, PAL.purple);
+  drawChevron(midX, MAP_Y0 + MAP_OUTER_H + 2, "down", 8, PAL.purple);
+  drawChevron(MAP_X0 - 2, midY, "left", 8, PAL.purple);
+  drawChevron(MAP_X0 + MAP_OUTER_W + 2, midY, "right", 8, PAL.purple);
+
+  // coordinate readout above the map, e.g. "(7)(6)"
+  ctx.fillStyle = PAL.white;
+  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  var coordStr = "(" + state.x + ")(" + state.y + ")";
+  ctx.fillText(coordStr, midX, MAP_Y0 - 12);
+  ctx.textAlign = "left";
+
+  // location name banner under the map
+  ctx.fillStyle = PAL.white;
+  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.textAlign = "center";
+  var label = modeLabel();
+  if (state.mounted) label += "  (Mounted)";
+  else if (state.sailing) label += "  (Sailing)";
+  ctx.fillText(label, midX, LOCLABEL_Y + 12);
+  ctx.textAlign = "left";
+}
+
+function modeLabel() {
+  if (state.mode === "town") return "TOWN OF BRAMBLE";
+  if (state.mode === "dungeon") return "DUNGEON DEPTHS";
+  if (state.mode === "island") return "UNCHARTED ISLE";
+  if (state.mode === "islandTown") return "PORT REVERIE";
+  if (state.mode === "moon") return "GREY MOON";
+  if (state.mode === "moonTown") return "LUNA STATION";
+  if (state.mode === "combat") return "COMBAT";
+  return "SOUTH WIND";
+}
+
+// ============================================================
+// TILE DRAWING — chunky tiles with dense dot/cross/brick textures
+// ============================================================
+function drawTile(sx, sy, size, type, gx, gy) {
+  px(sx, sy, size, size, PAL.black);
+  var parity = (gx * 3 + gy * 7) % 4;
+
+  if (type === T.GRASS) {
+    px(sx, sy, size, size, PAL.black);
+    ctx.fillStyle = PAL.green;
+    // dense cross/dot pattern like the reference grass texture
+    var step = Math.max(3, Math.floor(size / 4));
+    for (var yy = 1; yy < size; yy += step) {
+      for (var xx = 1; xx < size; xx += step) {
+        var offset = ((gx + gy + xx + yy) % 3);
+        if (offset !== 2) {
+          drawCross(sx + xx, sy + yy, PAL.green);
+        } else {
+          px(sx + xx, sy + yy, 1, 1, PAL.greenDark);
+        }
+      }
+    }
+  } else if (type === T.WATER) {
+    px(sx, sy, size, size, PAL.water);
+    ctx.strokeStyle = PAL.waterLight;
+    ctx.lineWidth = 1;
+    for (var wy = 3; wy < size; wy += 5) {
+      ctx.beginPath();
+      for (var wx = 0; wx <= size; wx += 4) {
+        var yOff = ((wx / 4 + gx) % 2 === 0) ? 0 : 2;
+        if (wx === 0) ctx.moveTo(sx + wx, sy + wy + yOff);
+        else ctx.lineTo(sx + wx, sy + wy + yOff);
+      }
+      ctx.stroke();
+    }
+  } else if (type === T.FOREST) {
+    px(sx, sy, size, size, PAL.black);
+    var cx = sx + size / 2, cy = sy + size / 2;
+    ctx.fillStyle = PAL.greenDark;
+    ctx.beginPath(); ctx.arc(cx, cy, size * 0.42, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = PAL.green;
+    ctx.beginPath(); ctx.arc(cx - size * 0.15, cy - size * 0.1, size * 0.26, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + size * 0.15, cy - size * 0.15, size * 0.22, 0, Math.PI * 2); ctx.fill();
+  } else if (type === T.MOUNTAIN) {
+    px(sx, sy, size, size, PAL.black);
+    ctx.fillStyle = PAL.gray;
+    ctx.beginPath();
+    ctx.moveTo(sx + size * 0.5, sy + size * 0.12);
+    ctx.lineTo(sx + size * 0.88, sy + size * 0.85);
+    ctx.lineTo(sx + size * 0.12, sy + size * 0.85);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = PAL.white;
+    ctx.beginPath();
+    ctx.moveTo(sx + size * 0.5, sy + size * 0.12);
+    ctx.lineTo(sx + size * 0.62, sy + size * 0.4);
+    ctx.lineTo(sx + size * 0.38, sy + size * 0.4);
+    ctx.closePath();
+    ctx.fill();
+  } else if (type === T.ROAD) {
+    px(sx, sy, size, size, PAL.black);
+    px(sx + size * 0.15, sy + size * 0.35, size * 0.7, size * 0.3, "#665544");
+    if (parity === 0) px(sx + size * 0.4, sy + size * 0.42, size * 0.12, size * 0.12, "#887766");
+  } else if (type === T.SAND) {
+    px(sx, sy, size, size, "#c8b878");
+    ctx.fillStyle = "#b8a468";
+    if (parity % 2 === 0) px(sx + size * 0.3, sy + size * 0.4, 1, 1, "#b8a468");
+    px(sx + size * 0.6, sy + size * 0.65, 1, 1, "#b8a468");
+  } else if (type === T.TOWN) {
+    px(sx, sy, size, size, PAL.black);
+    px(sx + size * 0.15, sy + size * 0.4, size * 0.7, size * 0.5, "#aa7733");
+    px(sx + size * 0.25, sy + size * 0.15, size * 0.5, size * 0.35, PAL.gray);
+    px(sx + size * 0.4, sy + size * 0.6, size * 0.2, size * 0.3, PAL.black);
+  } else if (type === T.DUNGEON) {
+    px(sx, sy, size, size, PAL.black);
+    ctx.fillStyle = "#8833cc";
+    ctx.beginPath(); ctx.arc(sx + size / 2, sy + size / 2, size * 0.32, 0, Math.PI * 2); ctx.fill();
+    px(sx + size * 0.4, sy + size * 0.4, size * 0.2, size * 0.2, PAL.black);
+  } else if (type === T.ISLAND) {
+    px(sx, sy, size, size, PAL.water);
+    ctx.strokeStyle = PAL.waterLight;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx + size * 0.05, sy + size * 0.85); ctx.lineTo(sx + size * 0.95, sy + size * 0.85);
+    ctx.stroke();
+    ctx.fillStyle = "#c8b878";
+    ctx.beginPath(); ctx.arc(sx + size / 2, sy + size * 0.62, size * 0.32, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = PAL.greenDark;
+    ctx.beginPath(); ctx.arc(sx + size * 0.4, sy + size * 0.42, size * 0.16, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + size * 0.62, sy + size * 0.38, size * 0.14, 0, Math.PI * 2); ctx.fill();
+  } else if (type === T.FLOOR) {
+    px(sx, sy, size, size, "#141414");
+    ctx.strokeStyle = "#2a2a2a";
+    ctx.strokeRect(sx + 0.5, sy + 0.5, size - 1, size - 1);
+  } else if (type === T.WALL) {
+    drawBrick(sx, sy, size, gx, gy);
+  } else if (type === T.DOOR) {
+    px(sx, sy, size, size, "#553311");
+    px(sx + size * 0.25, sy + size * 0.12, size * 0.5, size * 0.76, PAL.yellow);
+  } else if (type === T.CHEST) {
+    px(sx, sy, size, size, "#141414");
+    px(sx + size * 0.15, sy + size * 0.4, size * 0.7, size * 0.45, "#664422");
+    px(sx + size * 0.3, sy + size * 0.5, size * 0.4, size * 0.1, PAL.gold);
+  } else if (type === T.SHOPKEEP || type === T.INNKEEPER) {
+    px(sx, sy, size, size, "#141414");
+    drawHuman(sx + size / 2, sy + size / 2, size, type === T.SHOPKEEP ? "#ff8833" : "#ffffff", "S");
+  } else if (type === T.TAVERN) {
+    px(sx, sy, size, size, "#141414");
+    px(sx + size * 0.15, sy + size * 0.5, size * 0.7, size * 0.35, "#aa7733");
+    px(sx + size * 0.3, sy + size * 0.2, size * 0.4, size * 0.35, "#664422");
+  } else if (type === T.FOUNTAIN) {
+    px(sx, sy, size, size, "#141414");
+    ctx.fillStyle = PAL.waterLight;
+    ctx.beginPath(); ctx.arc(sx + size / 2, sy + size / 2, size * 0.35, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = PAL.white;
+    ctx.beginPath(); ctx.arc(sx + size / 2, sy + size / 2, size * 0.14, 0, Math.PI * 2); ctx.fill();
+  } else if (type === T.HEALER) {
+    px(sx, sy, size, size, "#141414");
+    drawHuman(sx + size / 2, sy + size / 2, size, "#ffee88", "S");
+  } else if (type === T.ARMORY) {
+    px(sx, sy, size, size, "#141414");
+    drawHuman(sx + size / 2, sy + size / 2, size, PAL.gray, "S");
+  } else if (type === T.KING) {
+    px(sx, sy, size, size, "#141414");
+    drawHuman(sx + size / 2, sy + size / 2, size, PAL.purple, "S");
+    // small crown above the head
+    ctx.fillStyle = PAL.yellow;
+    px(sx + size * 0.42, sy + size * 0.06, size * 0.16, size * 0.08, PAL.yellow);
+  } else if (type === T.STABLE) {
+    px(sx, sy, size, size, "#141414");
+    // simple stable-hand + a horse-head silhouette beside them
+    drawHuman(sx + size * 0.32, sy + size / 2, size * 0.7, "#8a5a33", "S");
+    ctx.fillStyle = "#8a5a33";
+    px(sx + size * 0.6, sy + size * 0.35, size * 0.3, size * 0.2, "#8a5a33");
+    px(sx + size * 0.78, sy + size * 0.25, size * 0.14, size * 0.18, "#8a5a33");
+  } else if (type === T.PORTAL || type === T.MOON_PORTAL) {
+    px(sx, sy, size, size, type === T.MOON_PORTAL ? "#2a2a3a" : PAL.black);
+    var cx3 = sx + size / 2, cy3 = sy + size / 2;
+    ctx.strokeStyle = "#cc66ff";
+    ctx.lineWidth = 2;
+    for (var ring = 0; ring < 3; ring++) {
+      ctx.beginPath();
+      ctx.arc(cx3, cy3, size * (0.14 + ring * 0.09), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#eeccff";
+    ctx.beginPath();
+    ctx.arc(cx3, cy3, size * 0.08, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (type === T.MOON_GRASS) {
+    px(sx, sy, size, size, "#4a4a52");
+    ctx.fillStyle = "#5a5a62";
+    var pat3 = (gx * 3 + gy * 7) % 5;
+    px(sx + 1, sy + 1, 1, 1, "#6a6a72");
+    if (pat3 === 0) px(sx + 5, sy + 3, 1, 1, "#6a6a72");
+    if (pat3 === 1) px(sx + 3, sy + 5, 1, 1, "#3a3a42");
+  } else if (type === T.MOON_SHOP) {
+    px(sx, sy, size, size, "#1a1a22");
+    drawHuman(sx + size / 2, sy + size / 2, size, "#66ccff", "S");
+  } else if (type === T.HUT || type === T.MOAI || type === T.SHRINE || type === T.CHURCH ||
+             type === T.GARDEN_FOUNTAIN || type === T.ASIA_CASTLE) {
+    // these landmarks sit on ordinary grass — draw the grass texture
+    // underneath, and let the emoji itself be drawn in a later pass
+    // (see renderMap's second pass) so it can never be clipped by a
+    // neighboring tile
+    drawTile(sx, sy, size, T.GRASS, gx, gy);
+  } else if (type === T.VOLCANO) {
+    px(sx, sy, size, size, "#2a1a15");
+  } else if (type === T.GRAVE) {
+    px(sx, sy, size, size, "#1a1a1a");
+  } else if (type === T.BRIDGE) {
+    px(sx, sy, size, size, "#8a6a3a");
+    ctx.strokeStyle = "#5a3a1a";
+    ctx.lineWidth = 1;
+    for (var bxi = 2; bxi < size; bxi += 4) {
+      ctx.beginPath(); ctx.moveTo(sx + bxi, sy); ctx.lineTo(sx + bxi, sy + size); ctx.stroke();
+    }
+  } else if (type === T.BED) {
+    // decoration on the room's normal floor — emoji drawn in the second
+    // pass (see renderMap) to avoid the clipping bug
+    drawTile(sx, sy, size, T.FLOOR, gx, gy);
+  } else if (type === T.HUT_NPC) {
+    px(sx, sy, size, size, "#241f18");
+    drawHuman(sx + size / 2, sy + size / 2, size, "#cc8844", "S");
+  } else if (type === T.MOURNER) {
+    // decoration on grass (cemetery ground) — same reasoning
+    drawTile(sx, sy, size, T.GRASS, gx, gy);
+  } else if (type === T.HORSE) {
+    px(sx, sy, size, size, PAL.greenDark);
+    drawHorseSprite(sx, sy, size);
+  } else if (type === T.SHIP) {
+    drawShipSprite(sx, sy, size);
+  }
+}
+
+// A proper little ship silhouette: hull, mast, sail, flag — used both for
+// the map marker and the pirate arena's beached/anchored ship.
+function drawShipSprite(sx, sy, size) {
+  px(sx, sy, size, size, PAL.water);
+  ctx.strokeStyle = PAL.waterLight;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(sx + size * 0.05, sy + size * 0.9);
+  ctx.lineTo(sx + size * 0.95, sy + size * 0.9);
+  ctx.stroke();
+
+  // hull
+  ctx.fillStyle = "#6a4526";
+  ctx.beginPath();
+  ctx.moveTo(sx + size * 0.1, sy + size * 0.62);
+  ctx.lineTo(sx + size * 0.9, sy + size * 0.62);
+  ctx.lineTo(sx + size * 0.72, sy + size * 0.86);
+  ctx.lineTo(sx + size * 0.28, sy + size * 0.86);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#8a5a33";
+  px(sx + size * 0.12, sy + size * 0.58, size * 0.76, size * 0.08, "#8a5a33");
+
+  // mast
+  ctx.fillStyle = "#4a3018";
+  px(sx + size * 0.48, sy + size * 0.12, size * 0.05, size * 0.5, "#4a3018");
+
+  // sail
+  ctx.fillStyle = "#e8e0c8";
+  ctx.beginPath();
+  ctx.moveTo(sx + size * 0.5, sy + size * 0.14);
+  ctx.lineTo(sx + size * 0.5, sy + size * 0.52);
+  ctx.lineTo(sx + size * 0.78, sy + size * 0.5);
+  ctx.closePath();
+  ctx.fill();
+
+  // small flag on top
+  ctx.fillStyle = PAL.red;
+  ctx.beginPath();
+  ctx.moveTo(sx + size * 0.53, sy + size * 0.1);
+  ctx.lineTo(sx + size * 0.68, sy + size * 0.14);
+  ctx.lineTo(sx + size * 0.53, sy + size * 0.18);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// Generic single-emoji landmark tile, used for the simpler new locations
+// (hut, moai, shrine, church, garden fountain, volcano, grave, castle).
+function drawEmojiTile(sx, sy, size, glyph) {
+  ctx.save();
+  ctx.font = Math.round(size * 0.7) + "px serif"; // slight margin against wide multi-part glyphs
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(glyph, sx + size / 2, sy + size / 2 + 1);
+  ctx.restore();
+}
+
+function drawCross(x, y, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x - 1, y, 3, 1);
+  ctx.fillRect(x, y - 1, 1, 3);
+}
+
+function drawBrick(sx, sy, size, gx, gy) {
+  px(sx, sy, size, size, PAL.brickDark);
+  var rows = 4;
+  var rowH = size / rows;
+  for (var r = 0; r < rows; r++) {
+    var yOff = sy + r * rowH;
+    var brickW = size / 2;
+    var offsetX = (r % 2 === 0) ? 0 : brickW / 2;
+    for (var bx = -brickW; bx < size + brickW; bx += brickW) {
+      px(sx + bx + offsetX + 1, yOff + 1, brickW - 2, rowH - 2, PAL.brick);
+    }
+  }
+}
+
+// ============================================================
+// SPRITES — small but visibly colored humanoids like the reference
+// ============================================================
+function drawHuman(cx, cy, tileSize, tunicColor, facing) {
+  var s = tileSize / 32; // scale relative to a 32px baseline figure
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(s, s);
+
+  // legs
+  ctx.fillStyle = "#333333";
+  ctx.fillRect(-5, 6, 4, 7);
+  ctx.fillRect(1, 6, 4, 7);
+
+  // tunic/body
+  ctx.fillStyle = tunicColor;
+  ctx.fillRect(-6, -5, 12, 12);
+
+  // arms
+  ctx.fillStyle = tunicColor;
+  ctx.fillRect(-9, -3, 3, 8);
+  ctx.fillRect(6, -3, 3, 8);
+
+  // head
+  ctx.fillStyle = PAL.skin;
+  ctx.fillRect(-4, -13, 8, 8);
+
+  // hair
+  ctx.fillStyle = "#553322";
+  ctx.fillRect(-4, -14, 8, 3);
+
+  // weapon glint (small bright line) except when facing away
+  if (facing !== "N") {
+    ctx.fillStyle = "#dddddd";
+    ctx.fillRect(9, -2, 2, 10);
+  }
+
+  ctx.restore();
+}
+
+function drawPartyLeader(cx, cy, tileSize, facing, mounted, sailing, vehicleType) {
+  if (sailing) {
+    drawShipSprite(cx - tileSize / 2, cy - tileSize / 2, tileSize);
+  } else if (mounted && vehicleType === "car") {
+    drawCarSprite(cx - tileSize / 2, cy - tileSize / 2, tileSize);
+  } else if (mounted && vehicleType === "helicopter") {
+    drawHelicopterSprite(cx - tileSize / 2, cy - tileSize / 2, tileSize);
+  } else if (mounted) {
+    drawMountedRider(cx, cy, tileSize, facing);
+  } else {
+    drawHuman(cx, cy, tileSize, party[0].color, facing);
+  }
+}
+
+// Horse-and-rider look while mounted, drawn with emoji for a quick, clear
+// "you are riding" read at a glance. Emoji glyphs are inherently one fixed
+// orientation, so we flip horizontally when facing west for a bit of life.
+function drawMountedRider(cx, cy, tileSize, facing) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (facing === "W") ctx.scale(-1, 1);
+  ctx.font = Math.round(tileSize * 0.9) + "px serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("🐎", 0, 2);
+  ctx.restore();
+}
+
+// Landmark tiles whose emoji is drawn in the second render pass (see
+// renderMap) rather than baked into drawTile — avoids the clipping bug
+// where a wide glyph bleeds into a neighboring tile that hasn't been
+// painted yet.
+var LANDMARK_EMOJI = {};
+LANDMARK_EMOJI[T.HUT] = "🛖";
+LANDMARK_EMOJI[T.MOAI] = "🗿";
+LANDMARK_EMOJI[T.SHRINE] = "⛩️";
+LANDMARK_EMOJI[T.CHURCH] = "⛪️";
+LANDMARK_EMOJI[T.GARDEN_FOUNTAIN] = "⛲️";
+LANDMARK_EMOJI[T.VOLCANO] = "🌋";
+LANDMARK_EMOJI[T.ASIA_CASTLE] = "🏯";
+LANDMARK_EMOJI[T.GRAVE] = "🪦";
+LANDMARK_EMOJI[T.BED] = "🛏️";
+LANDMARK_EMOJI[T.MOURNER] = "🧎";
+
+var MONSTER_EMOJI = {
+  "Orc": "👹",
+  "Skeleton": "💀",
+  "Giant Rat": "🐀",
+  "Sea Serpent": "🐉",
+  "Snake": "🐍",
+  "Pirate": "🥷",
+  "Alien": "👽",
+  "Wizard": "🧙‍♂️",
+  "Troll": "🧌",
+  "Vampire": "🧛🏻",
+  "Zombie": "🧟‍♂️",
+  "Genie": "🧞‍♂️",
+  "Fairy": "🧚🏻‍♀️",
+  "Giant Wasp": "🦟",
+  "Scorpion": "🦂",
+  "Kraken": "🦑",
+  "Bat": "🦇",
+  "Wolf": "🐺",
+  "Giant Eagle": "🦅",
+  "Monkey": "🐒",
+  "Yeti": "🫈"
+  // Guard and Wild Horse are NOT in this map — they use their own drawn
+  // pixel-art sprites (drawGuard/existing horse art), not emoji.
+};
+
+// Standalone horse silhouette (no rider, no assumed background) — the
+// exact pixel-art look you approved, reused for both the map landmark
+// and the Wild Horse combat encounter (no emoji needed here).
+function drawHorseSprite(sx, sy, size) {
+  ctx.fillStyle = "#8a5a33";
+  px(sx + size * 0.2, sy + size * 0.35, size * 0.55, size * 0.3, "#8a5a33");
+  px(sx + size * 0.65, sy + size * 0.2, size * 0.18, size * 0.25, "#8a5a33");
+  px(sx + size * 0.25, sy + size * 0.62, size * 0.12, size * 0.28, "#5a3a1f");
+  px(sx + size * 0.55, sy + size * 0.62, size * 0.12, size * 0.28, "#5a3a1f");
+}
+
+// Car and helicopter are simple emoji sprites — no need for hand-drawn
+// pixel art like the horse/ship, they're new enough to keep lightweight.
+function drawCarSprite(sx, sy, size) {
+  ctx.save();
+  ctx.font = Math.round(size * 0.72) + "px serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("🏎️", sx + size / 2, sy + size / 2 + 1);
+  ctx.restore();
+}
+function drawHelicopterSprite(sx, sy, size) {
+  ctx.save();
+  ctx.font = Math.round(size * 0.72) + "px serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("🚁", sx + size / 2, sy + size / 2 + 1);
+  ctx.restore();
+}
+function drawRocketSprite(sx, sy, size) {
+  ctx.save();
+  ctx.font = Math.round(size * 0.72) + "px serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("🚀", sx + size / 2, sy + size / 2 + 1);
+  ctx.restore();
+}
+
+function drawMonster(cx, cy, tileSize, name) {
+  if (name === "Guard") { drawHuman(cx, cy, tileSize, "#1a2a6a", "S"); return; } // dark blue uniform
+  if (name === "Wild Horse") { drawHorseSprite(cx - tileSize / 2, cy - tileSize / 2, tileSize); return; }
+  var glyph = MONSTER_EMOJI[name] || "👹";
+  ctx.save();
+  ctx.translate(cx, cy);
+  // Slightly smaller than a full tile — some emoji are multi-codepoint
+  // sequences (ZWJ, like the wizard/zombie/genie/fairy) that render wider
+  // than a single glyph at the same font size, so this keeps a safety
+  // margin on every side rather than assuming a uniform glyph width.
+  ctx.font = Math.round(tileSize * 0.72) + "px serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(glyph, 0, 1);
+  ctx.restore();
+}
+
+// ============================================================
+// MAP RENDER
+// ============================================================
+// Effective vision radius: normally the full viewport half-width, but
+// forest fog shrinks it a lot when you're standing in or right next to
+// a forest patch.
+function currentVisionRadius() {
+  var half = Math.floor(VIEW_TILES / 2);
+  if (state.mode !== "overworld") return half; // fog only applies outdoors
+  var here = tileAt(state.x, state.y);
+  if (here === T.FOREST) return 3;
+  var deltas = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  for (var i = 0; i < deltas.length; i++) {
+    if (tileAt(state.x + deltas[i][0], state.y + deltas[i][1]) === T.FOREST) return 3;
+  }
+  return half;
+}
+
+// A tile is hidden behind a mountain if a mountain sits strictly between
+// the player and that tile along the same rough line (simple radius-based
+// occlusion, not full raycasting).
+function blockedByMountain(gx, gy) {
+  if (state.mode !== "overworld") return false;
+  var dx = gx - state.x, dy = gy - state.y;
+  var steps = Math.max(Math.abs(dx), Math.abs(dy));
+  if (steps <= 1) return false;
+  var stepX = dx / steps, stepY = dy / steps;
+  for (var s = 1; s < steps; s++) {
+    var px2 = Math.round(state.x + stepX * s);
+    var py2 = Math.round(state.y + stepY * s);
+    if (tileAt(px2, py2) === T.MOUNTAIN) return true;
+  }
+  return false;
+}
+
+function renderMap() {
+  var half = Math.floor(VIEW_TILES / 2);
+  var visionR = currentVisionRadius();
+  var fogActive = visionR < half; // only carve the view down when fog is actually in effect (near forest)
+
+  // Pass 1: terrain, ground items, parked ship/horse — every tile fully
+  // painted before anything is drawn on top of it.
+  for (var vy = 0; vy < VIEW_TILES; vy++) {
+    for (var vx = 0; vx < VIEW_TILES; vx++) {
+      var gx = state.x - half + vx;
+      var gy = state.y - half + vy;
+      var t = tileAt(gx, gy);
+      var sx = MAP_INNER_X0 + vx * TILE;
+      var sy = MAP_INNER_Y0 + vy * TILE;
+
+      var outOfVision = fogActive && Math.max(Math.abs(gx - state.x), Math.abs(gy - state.y)) > visionR;
+      var hiddenByMountain = blockedByMountain(gx, gy);
+
+      if (t === null || outOfVision || hiddenByMountain) {
+        px(sx, sy, TILE, TILE, PAL.black);
+        continue;
+      }
+      drawTile(sx, sy, TILE, t, gx, gy);
+
+      var ground = groundItemAt(state.mode, gx, gy);
+      if (ground) drawGroundItem(sx, sy, TILE, ground);
+
+      // the player's own ship, docked wherever they last left it — drawn
+      // dynamically (not baked into the map grid) so it can move/park
+      if (ship.owned && !state.sailing && ship.screen === state.mode && ship.x === gx && ship.y === gy) {
+        drawShipSprite(sx, sy, TILE);
+      }
+      if (rocket.owned && rocket.screen === state.mode && rocket.x === gx && rocket.y === gy) {
+        drawRocketSprite(sx, sy, TILE);
+      }
+
+      // the player's own horse, parked wherever they last dismounted
+      if (horse.owned && !state.mounted && horse.screen === state.mode && horse.x === gx && horse.y === gy) {
+        drawHorseSprite(sx, sy, TILE);
+      }
+      if (car.owned && !state.mounted && car.screen === state.mode && car.x === gx && car.y === gy) {
+        drawCarSprite(sx, sy, TILE);
+      }
+      if (helicopter.owned && !state.mounted && helicopter.screen === state.mode && helicopter.x === gx && helicopter.y === gy) {
+        drawHelicopterSprite(sx, sy, TILE);
+      }
+
+      if (wildHorseAt(gx, gy, state.mode)) {
+        drawTile(sx, sy, TILE, T.HORSE, gx, gy);
+      }
+
+      var roamingNpcHere = roamingNpcs.find(function (e) { return e.screen === state.mode && e.x === gx && e.y === gy; });
+      if (roamingNpcHere) {
+        drawHuman(sx + TILE / 2, sy + TILE / 2, TILE, roamingNpcHere.kind === "armory" ? PAL.gray : "#ff8833", "S");
+      }
+      var stableHorseHere = stableHorses.find(function (e) { return e.screen === state.mode && e.x === gx && e.y === gy; });
+      if (stableHorseHere) {
+        drawHorseSprite(sx, sy, TILE);
+      }
+
+      var tornadoHere = tornadoes.find(function (t) { return t.screen === state.mode && t.x === gx && t.y === gy; });
+      if (tornadoHere) {
+        ctx.save();
+        ctx.font = Math.round(TILE * 0.72) + "px serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("🌪️", sx + TILE / 2, sy + TILE / 2 + 1);
+        ctx.restore();
+      }
+    }
+  }
+
+  // Pass 2: monsters, drawn on top of every already-finished tile, so an
+  // emoji that renders slightly wider than one tile overlaps a neighbor
+  // that's already fully painted instead of being clipped by it.
+  for (var mi = 0; mi < mapMonsters.length; mi++) {
+    var mm = mapMonsters[mi];
+    if (mm.screen !== state.mode) continue;
+    var mvx = mm.x - (state.x - half), mvy = mm.y - (state.y - half);
+    if (mvx < 0 || mvx >= VIEW_TILES || mvy < 0 || mvy >= VIEW_TILES) continue;
+    var msx = MAP_INNER_X0 + mvx * TILE, msy = MAP_INNER_Y0 + mvy * TILE;
+    drawMonster(msx + TILE / 2, msy + TILE / 2, TILE, mm.name);
+  }
+
+  // Pass 2b: landmark emoji (hut, moai, shrine, church, garden fountain,
+  // volcano, castle, grave) — same reasoning as monsters above.
+  for (var lvy = 0; lvy < VIEW_TILES; lvy++) {
+    for (var lvx = 0; lvx < VIEW_TILES; lvx++) {
+      var lgx = state.x - half + lvx, lgy = state.y - half + lvy;
+      var lt = tileAt(lgx, lgy);
+      var glyph = LANDMARK_EMOJI[lt];
+      if (!glyph) continue;
+      var lsx = MAP_INNER_X0 + lvx * TILE, lsy = MAP_INNER_Y0 + lvy * TILE;
+      drawEmojiTile(lsx, lsy, TILE, glyph);
+    }
+  }
+
+  drawPartyLeader(MAP_INNER_X0 + half * TILE + TILE / 2, MAP_INNER_Y0 + half * TILE + TILE / 2, TILE, state.facing, state.mounted, state.sailing, state.vehicleType);
+}
+
+function wildHorseAt(gx, gy, screenKey) {
+  for (var i = 0; i < wildHorses.length; i++) {
+    var wh = wildHorses[i];
+    if (wh.screen === screenKey && wh.x === gx && wh.y === gy) return true;
+  }
+  return false;
+}
+
+function drawGroundItem(sx, sy, size, ground) {
+  if (ground.kind === "gold") {
+    px(sx + size * 0.15, sy + size * 0.4, size * 0.7, size * 0.45, "#664422");
+    px(sx + size * 0.3, sy + size * 0.5, size * 0.4, size * 0.1, PAL.gold);
+  } else {
+    ctx.fillStyle = ground.category === "potion" ? "#ff44ff" : (ground.category === "weapon" ? "#cccccc" : "#4488ff");
+    ctx.beginPath();
+    ctx.arc(sx + size / 2, sy + size / 2, size * 0.18, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// ============================================================
+// PARTY STRIPS — two members top (compact single-line cards side
+// by side), two members bottom, matching "Name CLS M:xx L:xx
+// H:xxxx F:xxxx" but condensed to fit a horizontal strip.
+// ============================================================
+function drawPartyMini(x, y, w, h, p) {
+  ctx.strokeStyle = PAL.purple;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+
+  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.fillStyle = p.alive ? PAL.white : PAL.red;
+  ctx.textAlign = "left";
+  ctx.fillText(p.name, x + 6, y + 15);
+
+  ctx.font = "bold 11px 'Courier New', monospace";
+  ctx.fillStyle = PAL.gold;
+  ctx.textAlign = "right";
+  ctx.fillText(sharedGold + "G", x + w - 4, y + 15);
+  ctx.textAlign = "left";
+
+  ctx.font = "11px 'Courier New', monospace";
+  ctx.fillStyle = PAL.white;
+  var line1 = p.cls + " M:" + pad2(p.mana) + " L:" + pad2(p.lvl);
+  ctx.fillText(line1, x + 6, y + 29);
+
+  var line2 = "H:" + pad4(Math.max(0, p.hp)) + " F:" + pad4(p.food);
+  ctx.fillText(line2, x + 6, y + 42);
+}
+
+function renderTopBar() {
+  px(0, 0, LW, TOPBAR_H, PAL.black);
+  var half = LW / 2;
+  drawPartyMini(2, 2, half - 4, TOPBAR_H - 4, party[0]);
+  drawPartyMini(half + 2, 2, half - 4, TOPBAR_H - 4, party[1]);
+}
+
+function renderBottomBar() {
+  px(0, BOTBAR_Y0, LW, BOTBAR_H, PAL.black);
+  var half = LW / 2;
+  drawPartyMini(2, BOTBAR_Y0, half - 4, BOTBAR_H - 2, party[2]);
+  drawPartyMini(half + 2, BOTBAR_Y0, half - 4, BOTBAR_H - 2, party[3]);
+}
+
+// ============================================================
+// LOG / DESCRIPTION TEXT — bottom-most strip
+// ============================================================
+function renderLogArea() {
+  px(0, LOG_Y0, LW, LH - LOG_Y0, PAL.black);
+  ctx.strokeStyle = PAL.purpleDark;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, LOG_Y0 + 0.5);
+  ctx.lineTo(LW, LOG_Y0 + 0.5);
+  ctx.stroke();
+
+  ctx.font = "12px 'Courier New', monospace";
+  ctx.textAlign = "left";
+  var lineH = 15;
+  var maxLines = Math.floor((LH - LOG_Y0 - 6) / lineH);
+  var maxWidth = LW - 12; // small margin on both sides
+
+  // word-wrap each log entry into however many lines it actually needs,
+  // so a long message (like the moai flavor text) never runs off the
+  // edge of the canvas and gets silently clipped
+  var wrapped = [];
+  for (var k = Math.max(0, log.length - maxLines * 3); k < log.length; k++) {
+    var msg = log[k];
+    var isHeader = msg.indexOf("-----") === 0;
+    var lines = wrapText(msg, maxWidth);
+    lines.forEach(function (ln) { wrapped.push({ text: ln, header: isHeader }); });
+  }
+  var recent = wrapped.slice(-maxLines);
+  for (var j = 0; j < recent.length; j++) {
+    ctx.fillStyle = recent[j].header ? PAL.purple : PAL.white;
+    ctx.fillText(recent[j].text, 6, LOG_Y0 + j * lineH + 13);
+  }
+}
+
+// Splits a string into lines that each fit within maxWidth at the
+// current canvas font, breaking on word boundaries (falls back to a
+// hard character break only if a single "word" is wider than the line).
+function wrapText(text, maxWidth) {
+  var words = text.split(" ");
+  var lines = [];
+  var current = "";
+  for (var i = 0; i < words.length; i++) {
+    var candidate = current ? current + " " + words[i] : words[i];
+    if (ctx.measureText(candidate).width <= maxWidth) {
+      current = candidate;
+    } else {
+      if (current) lines.push(current);
+      current = words[i];
+      // extremely long single word — hard-break it so it doesn't just
+      // overflow anyway
+      while (ctx.measureText(current).width > maxWidth && current.length > 1) {
+        var cut = current.length - 1;
+        while (cut > 1 && ctx.measureText(current.slice(0, cut)).width > maxWidth) cut--;
+        lines.push(current.slice(0, cut));
+        current = current.slice(cut);
+      }
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : [""];
+}
+
+function pad2(n) { n = Math.max(0, n); var s = "" + n; while (s.length < 2) s = "0" + s; return s; }
+function pad4(n) { n = Math.max(0, n); var s = "" + n; while (s.length < 4) s = "0" + s; return s; }
+
+function renderAll() {
+  resizeCanvasCss();
+  px(0, 0, LW, LH, PAL.black);
+  if (state.mode === "combat") {
+    renderCombatScreen();
+  } else {
+    renderTopBar();
+    drawMapBorder();
+    renderMap();
+    renderBottomBar();
+    renderLogArea();
+  }
+  if (townScreen) renderTownScreenOverlay();
+
+  // FIRE button only makes sense while actually sailing, out on the map
+  // (not in combat, not in a town popup)
+  var fireBtn = document.getElementById("btnFire");
+  fireBtn.style.display = (state.sailing && state.mode !== "combat") ? "inline-block" : "none";
+
+  // DISMOUNT shows whenever mounted, out on the map
+  var dismountBtn = document.getElementById("btnDismount");
+  dismountBtn.style.display = (state.mounted && state.mode !== "combat") ? "inline-block" : "none";
+
+  // TAME only shows when a wild horse is actually adjacent
+  var tameBtn = document.getElementById("btnTame");
+  tameBtn.style.display = (state.mode !== "combat" && !townScreen && wildHorseAdjacent()) ? "inline-block" : "none";
+
+  // SHOOT only shows in combat, while a ranged weapon (Bow/Boomerang) is
+  // actually equipped
+  var shootBtn = document.getElementById("btnShoot");
+  var leaderWeapon = party[0] && party[0].equippedWeapon;
+  shootBtn.style.display = (state.mode === "combat" && leaderWeapon && leaderWeapon.ranged) ? "inline-block" : "none";
+}
+
+// ============================================================
+// FULL-SCREEN COMBAT VIEW — replaces the map entirely during a fight
+// ============================================================
+function renderCombatScreen() {
+  px(0, 0, LW, LH, PAL.black);
+
+  renderTopBar(); // keep the top two party cards visible, same as the overworld
+  drawMapBorder(); // reuse the same border chrome — coordinate readout + loc banner
+  renderArena();
+  renderBottomBar();
+  renderLogArea();
+
+  if (confirmingRun) renderRunConfirmDialog();
+}
+
+// The actual skirmish grid — same tile size/viewport as the overworld map,
+// just rendering the bounded arena room instead of the world.
+function renderArena() {
+  var grid = combat.arenaGrid;
+  for (var row = 0; row < ARENA_H; row++) {
+    for (var col = 0; col < ARENA_W; col++) {
+      var sx = MAP_INNER_X0 + col * TILE;
+      var sy = MAP_INNER_Y0 + row * TILE;
+      drawTile(sx, sy, TILE, grid[row][col], col, row);
+    }
+  }
+  // monsters
+  combat.monsters.forEach(function (m) {
+    if (m.hp <= 0) return;
+    var sx = MAP_INNER_X0 + m.x * TILE, sy = MAP_INNER_Y0 + m.y * TILE;
+    drawMonster(sx + TILE / 2, sy + TILE / 2, TILE, m.name);
+  });
+  // party members, leader drawn with facing, others as plain humans
+  party.forEach(function (p, i) {
+    if (!p.alive) return;
+    var sx = MAP_INNER_X0 + p.ax * TILE, sy = MAP_INNER_Y0 + p.ay * TILE;
+    if (i === 0) drawPartyLeader(sx + TILE / 2, sy + TILE / 2, TILE, state.facing);
+    else drawHuman(sx + TILE / 2, sy + TILE / 2, TILE, p.color, "S");
+  });
+}
+
+// ============================================================
+// "LEAVE BATTLE?" CONFIRMATION — Yes/No, plus the standard close-X
+// (X behaves the same as No: stay and keep fighting)
+// ============================================================
+function runConfirmRects() {
+  var boxW = 260, boxH = 130;
+  var boxX = LW / 2 - boxW / 2, boxY = LH / 2 - boxH / 2;
+  return {
+    box: { x: boxX, y: boxY, w: boxW, h: boxH },
+    close: { x: boxX + boxW - 30, y: boxY + 6, w: 24, h: 24 },
+    yes: { x: boxX + 20, y: boxY + boxH - 44, w: 90, h: 32 },
+    no: { x: boxX + boxW - 110, y: boxY + boxH - 44, w: 90, h: 32 }
+  };
+}
+function renderRunConfirmDialog() {
+  var r = runConfirmRects();
+  px(r.box.x, r.box.y, r.box.w, r.box.h, "#0a0a0a");
+  ctx.strokeStyle = PAL.purple;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(r.box.x, r.box.y, r.box.w, r.box.h);
+
+  // close-X (same visual language as every other popup)
+  ctx.strokeStyle = PAL.red;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(r.close.x, r.close.y, r.close.w, r.close.h);
+  ctx.beginPath();
+  ctx.moveTo(r.close.x + 5, r.close.y + 5); ctx.lineTo(r.close.x + r.close.w - 5, r.close.y + r.close.h - 5);
+  ctx.moveTo(r.close.x + r.close.w - 5, r.close.y + 5); ctx.lineTo(r.close.x + 5, r.close.y + r.close.h - 5);
+  ctx.stroke();
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = PAL.white;
+  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.fillText("Leave the battle?", r.box.x + r.box.w / 2, r.box.y + 34);
+  ctx.font = "11px 'Courier New', monospace";
+  ctx.fillStyle = PAL.gray;
+  ctx.fillText("Monsters may loot your gold.", r.box.x + r.box.w / 2, r.box.y + 54);
+
+  ctx.strokeStyle = PAL.green;
+  ctx.strokeRect(r.yes.x, r.yes.y, r.yes.w, r.yes.h);
+  ctx.fillStyle = PAL.green;
+  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.fillText("YES", r.yes.x + r.yes.w / 2, r.yes.y + 21);
+
+  ctx.strokeStyle = PAL.red;
+  ctx.strokeRect(r.no.x, r.no.y, r.no.w, r.no.h);
+  ctx.fillStyle = PAL.red;
+  ctx.fillText("NO", r.no.x + r.no.w / 2, r.no.y + 21);
+  ctx.textAlign = "left";
+}
+
+// ============================================================
+// TOWN SERVICE OVERLAYS — shop / tavern / fountain, rendered as a
+// full-canvas text screen on top of everything else
+// ============================================================
+function renderTownScreenOverlay() {
+  px(20, 60, LW - 40, LH - 200, "#0a0a0a");
+  ctx.strokeStyle = PAL.purple;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(21, 61, LW - 42, LH - 202);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = PAL.white;
+  ctx.font = "bold 16px 'Courier New', monospace";
+  var title = townScreen === "shop" ? "WEAPONSMITH" : townScreen === "armory" ? "ARMORY"
+    : townScreen === "tavern" ? "TAVERN" : townScreen === "fountain" ? "FOUNTAIN"
+    : townScreen === "king" ? "THRONE ROOM" : townScreen === "stable" ? "STABLE"
+    : townScreen === "moonshop" ? "LUNAR ARMORY" : townScreen === "hutGift" ? "A KINDLY STRANGER" : "HEALER";
+  ctx.fillText(title, LW / 2, 90);
+  ctx.textAlign = "left";
+  ctx.font = "12px 'Courier New', monospace";
+
+  // close X, always top-right of the popup
+  drawCloseX();
+
+  var y = 115;
+  if (townScreen === "shop") {
+    ctx.fillStyle = PAL.gold;
+    ctx.fillText("Gold: " + sharedGold, 36, y); y += 22;
+    ctx.fillStyle = PAL.white;
+    LOOT_TABLE.weapon.forEach(function (w, i) {
+      var price = (i + 1) * 25;
+      var rangedTag = w.ranged ? (" [range " + w.range + (w.returns ? ", returns" : "") + "]") : "";
+      ctx.fillText((w.emoji || "") + " " + w.name + " (+" + w.dmgBonus + " dmg)" + rangedTag + " - " + price + "g  [tap W" + (i + 1) + "]", 36, y); y += 18;
+    });
+    ctx.fillText("Potion (heal 20) - 12g  [tap P]", 36, y); y += 18;
+  } else if (townScreen === "armory") {
+    ctx.fillStyle = PAL.gold;
+    ctx.fillText("Gold: " + sharedGold, 36, y); y += 22;
+    ctx.fillStyle = PAL.white;
+    LOOT_TABLE.armor.forEach(function (a, i) {
+      var price = (i + 1) * 30;
+      ctx.fillText(a.name + " (+" + a.defBonus + " def) - " + price + "g  [tap A" + (i + 1) + "]", 36, y); y += 18;
+    });
+  } else if (townScreen === "king") {
+    ctx.fillStyle = PAL.white;
+    ctx.fillText("\"Welcome, traveler.\"", 36, y); y += 20;
+    ctx.fillText("\"I have no task for thee at present.\"", 36, y); y += 20;
+    ctx.fillStyle = PAL.gray;
+    ctx.fillText("(quests coming soon)", 36, y); y += 18;
+  } else if (townScreen === "stable") {
+    ctx.fillStyle = PAL.gold;
+    ctx.fillText("Gold: " + sharedGold, 36, y); y += 22;
+    ctx.fillStyle = PAL.white;
+    if (state.mounted) {
+      ctx.fillText("You already have a horse.", 36, y); y += 18;
+    } else {
+      ctx.fillText("Horse - 50g  [tap H]", 36, y); y += 18;
+    }
+  } else if (townScreen === "moonshop") {
+    ctx.fillStyle = PAL.gold;
+    ctx.fillText("Gold: " + sharedGold, 36, y); y += 22;
+    ctx.fillStyle = PAL.white;
+    ctx.fillText(MOON_ARMOR.name + " (+" + MOON_ARMOR.defBonus + " def) - 200g  [tap M]", 36, y); y += 18;
+  } else if (townScreen === "tavern") {
+    if (tavernRecruit) {
+      ctx.fillStyle = PAL.white;
+      ctx.fillText("Name: " + tavernRecruit.name, 36, y); y += 18;
+      ctx.fillText("Race: " + tavernRecruit.race, 36, y); y += 18;
+      ctx.fillText("Class: " + tavernRecruit.clsLabel, 36, y); y += 18;
+      ctx.fillText("HP: " + tavernRecruit.maxHp, 36, y); y += 26;
+      ctx.fillStyle = PAL.yellow;
+      ctx.fillText("Retire whom to make room?", 36, y); y += 20;
+      party.forEach(function (p, i) {
+        ctx.fillStyle = PAL.white;
+        ctx.fillText((i + 1) + ". " + p.name + " (" + p.cls + ")  [tap R" + (i + 1) + "]", 36, y);
+        y += 18;
+      });
+    }
+  } else if (townScreen === "fountain") {
+    ctx.fillStyle = PAL.waterLight;
+    ctx.fillText("The water is free to all.", 36, y); y += 22;
+    ctx.fillStyle = PAL.white;
+    ctx.fillText("Drink & restore party HP  [tap H]", 36, y); y += 18;
+  } else if (townScreen === "healer" || townScreen === "church") {
+    ctx.fillStyle = PAL.white;
+    ctx.fillText("\"Coin buys back a soul.\"", 36, y); y += 22;
+    var anyDead = false;
+    party.forEach(function (p, i) {
+      if (!p.alive) {
+        anyDead = true;
+        ctx.fillStyle = PAL.red;
+        ctx.fillText("Revive " + p.name + " (" + p.reviveCost + "g)  [tap V" + (i + 1) + "]", 36, y);
+        y += 18;
+      }
+    });
+    if (!anyDead) {
+      ctx.fillStyle = PAL.gray;
+      ctx.fillText("No one here needs reviving.", 36, y); y += 18;
+    }
+  } else if (townScreen === "hutGift") {
+    ctx.fillStyle = PAL.white;
+    ctx.fillText("Give a gift to be healed:", 36, y); y += 20;
+    ctx.fillText("Gold (" + Math.min(sharedGold, 20) + "g)  [tap G]", 36, y); y += 18;
+    ctx.fillText("Potion (have " + potionCount + ")  [tap P]", 36, y); y += 18;
+    if (party[0].equippedWeapon) {
+      ctx.fillText("Your " + party[0].equippedWeapon.name + "  [tap W]", 36, y); y += 18;
+    }
+    if (party[0].armorBonus > 0) {
+      ctx.fillText("Your armor  [tap A]", 36, y); y += 18;
+    }
+  }
+}
+
+// Close-X box, drawn top-right of the popup card; tap region matches
+// exactly what handleTownTap checks below.
+var CLOSE_X_SIZE = 26;
+function closeXRect() {
+  return { x: LW - 40 - 6, y: 61 + 6, w: CLOSE_X_SIZE, h: CLOSE_X_SIZE };
+}
+function drawCloseX() {
+  var r = closeXRect();
+  ctx.strokeStyle = PAL.red;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(r.x, r.y, r.w, r.h);
+  ctx.beginPath();
+  ctx.moveTo(r.x + 5, r.y + 5); ctx.lineTo(r.x + r.w - 5, r.y + r.h - 5);
+  ctx.moveTo(r.x + r.w - 5, r.y + 5); ctx.lineTo(r.x + 5, r.y + r.h - 5);
+  ctx.stroke();
+}
+
+// ============================================================
+// MOVEMENT / INTERACTION
+// ============================================================
+function tryEncounter() {
+  if (state.mode !== "overworld" && state.mode !== "dungeon" && state.mode !== "island") return;
+  var cap = state.mode === "dungeon" ? 3 : 2;
+  var already = mapMonsters.filter(function (m) { return m.screen === state.mode; }).length;
+  if (already < cap && Math.random() < 0.05) spawnMapMonster(state.mode);
+}
+
+// ============================================================
+// ARENA — a bounded skirmish grid, same tile size/viewport as the
+// overworld. Monsters start near the top edge, party near the
+// bottom edge, and everyone (including monsters) has a live x/y
+// position they move around during the fight.
+// ============================================================
+var ARENA_W = VIEW_TILES, ARENA_H = VIEW_TILES;
+
+function buildArenaGrid(theme) {
+  if (theme === "dungeon" || theme === "castle") {
+    // brick-walled room — dungeon fights, and the rare castle/guard encounter
+    var g = mkMap(ARENA_W, ARENA_H, T.FLOOR);
+    for (var c = 0; c < ARENA_W; c++) { g[0][c] = T.WALL; g[ARENA_H - 1][c] = T.WALL; }
+    for (var r = 0; r < ARENA_H; r++) { g[r][0] = T.WALL; g[r][ARENA_W - 1] = T.WALL; }
+    return g;
+  }
+  if (theme === "coastal") {
+    // beach at the bottom (where the party stands), open water at the top
+    // with the ship anchored in it, matching a shoreline skirmish
+    var g3 = mkMap(ARENA_W, ARENA_H, T.GRASS);
+    var waterRows = Math.floor(ARENA_H * 0.45);
+    for (var row3 = 0; row3 < waterRows; row3++) {
+      for (var col3 = 0; col3 < ARENA_W; col3++) g3[row3][col3] = T.WATER;
+    }
+    // sandy transition strip right at the waterline
+    for (var col4 = 0; col4 < ARENA_W; col4++) g3[waterRows][col4] = T.SAND;
+    // the ship sits anchored in the water, roughly centered
+    var shipCol = Math.floor(ARENA_W / 2);
+    var shipRow = Math.max(1, waterRows - 2);
+    g3[shipRow][shipCol] = T.SHIP;
+    return g3;
+  }
+  // default "field" theme: open grass with a scatter of trees around the
+  // edges, matching the overworld look instead of a dungeon room
+  var g2 = mkMap(ARENA_W, ARENA_H, T.GRASS);
+  var seed = Math.floor(Math.random() * 100000);
+  function rand() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+  for (var row = 0; row < ARENA_H; row++) {
+    for (var col = 0; col < ARENA_W; col++) {
+      var edgeDist = Math.min(row, col, ARENA_H - 1 - row, ARENA_W - 1 - col);
+      if (edgeDist === 0 && rand() < 0.4) g2[row][col] = T.FOREST;
+    }
+  }
+  return g2;
+}
+
+function placeMonstersInArena(group) {
+  var usedTiles = {};
+  var cx = Math.floor(ARENA_W / 2);
+  var shipTile = null;
+  if (combat.theme === "coastal") {
+    for (var r = 0; r < ARENA_H; r++) {
+      for (var c = 0; c < ARENA_W; c++) {
+        if (combat.arenaGrid[r][c] === T.SHIP) { shipTile = { x: c, y: r }; }
+      }
+    }
+  }
+  group.forEach(function (m, i) {
+    var tries = 0;
+    var mx, my;
+    do {
+      mx = Math.max(1, Math.min(ARENA_W - 2, cx - Math.floor(group.length / 2) + i + (Math.floor(Math.random() * 3) - 1)));
+      my = 1 + Math.floor(Math.random() * 2); // top two rows
+      tries++;
+    } while ((usedTiles[mx + "," + my] || (shipTile && mx === shipTile.x && my === shipTile.y)) && tries < 10);
+    usedTiles[mx + "," + my] = true;
+    m.x = mx; m.y = my;
+  });
+}
+
+function placePartyInArena() {
+  var cx = Math.floor(ARENA_W / 2);
+  var positions = [
+    { x: cx - 1, y: ARENA_H - 2 },
+    { x: cx + 1, y: ARENA_H - 2 },
+    { x: cx - 2, y: ARENA_H - 3 },
+    { x: cx + 2, y: ARENA_H - 3 }
+  ];
+  party.forEach(function (p, i) {
+    p.ax = positions[i].x;
+    p.ay = positions[i].y;
+  });
+}
+
+function rollGroupSize() {
+  // weighted toward smaller groups: 1-6, but 1-2 much more common than 5-6
+  var r = Math.random();
+  if (r < 0.30) return 1;
+  if (r < 0.55) return 2;
+  if (r < 0.75) return 3;
+  if (r < 0.88) return 4;
+  if (r < 0.96) return 5;
+  return 6;
+}
+
+function buildMonsterGroup(seedDef, pureGroup) {
+  var count = rollGroupSize();
+  var group = [];
+  for (var i = 0; i < count; i++) {
+    // pureGroup encounters (pirates, guards) are all the same type; mixed
+    // wandering-monster packs draw the rest randomly from the general pool
+    var def = (i === 0 || pureGroup) ? seedDef : MONSTER_DEFS[Math.floor(Math.random() * MONSTER_DEFS.length)];
+    group.push(makeMonsterInstance(def, 0, 0));
+  }
+  return group;
+}
+
+function enterArena(group, returnMode, encounterKind, forceTheme) {
+  var isDungeonFight = returnMode === "dungeon";
+  var arenaTheme = forceTheme ? forceTheme
+    : isDungeonFight ? "dungeon"
+    : encounterKind === "guard" ? "castle"
+    : encounterKind === "pirate" ? "coastal"
+    : "field";
+  combat = {
+    monsters: group, returnMode: returnMode, arenaGrid: buildArenaGrid(arenaTheme),
+    kind: encounterKind || null, theme: arenaTheme
+  };
+  placeMonstersInArena(group);
+  placePartyInArena();
+  state.mode = "combat";
+  pushLog("-----Conflict!!-----");
+  pushLog(">" + group.length + " monster" + (group.length > 1 ? "s" : "") + " approach!");
+  renderAll();
+}
+
+function startCombatWithMonster(mapMonster, screenKey) {
+  var def = findMonsterDef(mapMonster.name);
+  if (!def) return;
+  var group = buildMonsterGroup(def, !!def.aquatic); // aquatic packs stay pure (all Sea Serpents/Krakens)
+  // aquatic encounters use the coastal arena theme (water + ship visuals)
+  // rather than the plain grass "field" default
+  enterArena(group, screenKey, def.aquatic ? "pirate" : null);
+}
+
+// Looks up a monster definition by name across every pool — the general
+// land pool plus the special aquatic/pirate/guard defs.
+var SPECIAL_MONSTER_DEFS = [
+  SEA_SERPENT_DEF, PIRATE_DEF, GUARD_DEF, WILD_HORSE_DEF, WIZARD_DEF,
+  BAT_DEF, GIANT_WASP_DEF, GIANT_EAGLE_DEF, MONKEY_DEF, YETI_DEF, KRAKEN_DEF, ALIEN_DEF,
+  PHOENIX_DEF, ELITE_GUARD_DEF
+];
+function findMonsterDef(name) {
+  for (var i = 0; i < MONSTER_DEFS.length; i++) {
+    if (MONSTER_DEFS[i].name === name) return MONSTER_DEFS[i];
+  }
+  for (var j = 0; j < SPECIAL_MONSTER_DEFS.length; j++) {
+    if (SPECIAL_MONSTER_DEFS[j].name === name) return SPECIAL_MONSTER_DEFS[j];
+  }
+  return null;
+}
+
+function startCombat() {
+  // used for the classic ambush case (bumping straight into an encounter
+  // without a wandering monster sprite already on screen)
+  var seedDef = MONSTER_DEFS[Math.floor(Math.random() * MONSTER_DEFS.length)];
+  var group = buildMonsterGroup(seedDef);
+  enterArena(group, state.mode);
+}
+
+var lastKillerIdx = null; // tracks whoever landed the most recent kill, for reward attribution
+function registerKill(monster, killerIdx) {
+  lastKillerIdx = killerIdx;
+  monsterKillCounts[monster.baseName] = (monsterKillCounts[monster.baseName] || 0) + 1;
+  var killer = party[killerIdx];
+  if (killer && killer.alive) {
+    killer.xp += monster.xp;
+    var xpNeeded = killer.lvl * 20;
+    if (killer.xp >= xpNeeded) {
+      killer.xp -= xpNeeded;
+      killer.lvl += 1;
+      killer.maxHp += 6;
+      killer.hp = killer.maxHp;
+      pushLog(killer.name + " reached level " + killer.lvl + "!");
+    }
+  }
+  // loot drop, placed at the monster's death tile in the screen we return to
+  var loot = rollLootForMonster(monster.tier);
+  if (loot) {
+    var dropX = monster.x, dropY = monster.y;
+    if (loot.category === "potion") {
+      addGroundItem(combat.returnMode, dropX, dropY, { kind: "item", category: "potion", item: loot.item });
+    } else {
+      addGroundItem(combat.returnMode, dropX, dropY, { kind: "item", category: loot.category, item: loot.item });
+    }
+    pushLog(monster.name + " dropped " + loot.item.name + "!");
+  }
+}
+
+function endCombatVictory() {
+  var g = 0;
+  combat.monsters.forEach(function (m) { g += rollRange(m.gold); });
+  sharedGold += g;
+  pushLog("Victory! +" + g + "g");
+  if (combat.kind === "pirate" && !ship.owned) {
+    ship.owned = true;
+    ship.screen = combat.returnMode;
+    ship.x = state.x; ship.y = state.y; // docked right where you fought them
+    pushLog("You claim the pirates' ship! It awaits at the shore.");
+  }
+  if (combat.kind === "alien" && !alienQuestComplete) {
+    alienEncountersWon += 1;
+    pushLog("Alien encounter defeated! (" + alienEncountersWon + "/3)");
+    if (alienEncountersWon >= 3) {
+      alienQuestComplete = true;
+      var hero = (lastKillerIdx !== null && party[lastKillerIdx]) ? party[lastKillerIdx] : party[0];
+      hero.title = "Alien Slayer";
+      hero.weaponBonus = Math.max(hero.weaponBonus, QUEST_REWARD_ITEM.dmgBonus);
+      var bonusGold = 150;
+      sharedGold += bonusGold;
+      pushLog("-----Quest Complete!-----");
+      pushLog(hero.name + " is named \"" + hero.title + "\"!");
+      pushLog(hero.name + " is given the " + QUEST_REWARD_ITEM.name + "!");
+      pushLog("+" + bonusGold + "g bounty from the moon settlers.");
+      pushLog("The Lunar Armory will now trade with you.");
+    }
+  }
+  if (combat.kind === "phoenix") {
+    party[0].weaponBonus = Math.max(party[0].weaponBonus, FIRE_BOW.dmgBonus);
+    party[0].equippedWeapon = FIRE_BOW;
+    pushLog("The Phoenix's ashes reveal a Fire Bow!");
+    pushLog(party[0].name + " equips the Fire Bow!");
+  }
+  state.mode = combat.returnMode;
+  combat = null;
+  renderAll();
+}
+
+function partyAlive() { return party.some(function (p) { return p.alive; }); }
+
+// After a defeat, drop the party back at a safe starting spot appropriate
+// to whichever map they were on — not just the mainland's start tile.
+// Finds the given landmark tile type on a grid and returns it (or null).
+function findTileOnGrid(grid, tileType) {
+  for (var r = 0; r < grid.length; r++) {
+    for (var c = 0; c < grid[0].length; c++) {
+      if (grid[r][c] === tileType) return { x: c, y: r };
+    }
+  }
+  return null;
+}
+
+// After a full party defeat, only the leader wakes up — teleported to
+// the nearest hospital/healer, not just dropped back where they were.
+// The other 3 party members stay dead until revived (and paid for) at
+// a healer, same as any other time someone falls.
+function respawnAfterDefeat() {
+  if (state.mode === "island" || state.mode === "islandTown") {
+    state.mode = "islandTown";
+    state.x = 12; state.y = 15; // just below/adjacent to the island healer at (12,14)
+    // make sure the exit door drops the player just outside THIS town's
+    // gate, not wherever they happened to enter the island from before
+    var islandGate = findTileOnGrid(islandGrid, T.TOWN);
+    if (islandGate) state.fromIsland = adjacentWalkableTile(islandGrid, islandGate);
+  } else {
+    // mainland, dungeon, moon, and moon town all funnel to the mainland
+    // hospital — the only other healer (the moon has none at all)
+    state.mode = "town";
+    state.x = 36; state.y = 33; // just below/adjacent to the mainland healer at (36,32)
+    var mainlandGate = findTileOnGrid(overworldGrid, T.TOWN);
+    if (mainlandGate) state.fromOverworld = adjacentWalkableTile(overworldGrid, mainlandGate);
+  }
+}
+
+// Picks a walkable tile next to a landmark (the gate) — matches the
+// convention the normal entry flow uses, where "from" is the tile you
+// were standing on right before stepping onto the town marker itself,
+// not the marker tile.
+function adjacentWalkableTile(grid, spot) {
+  var deltas = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+  for (var i = 0; i < deltas.length; i++) {
+    var x = spot.x + deltas[i][0], y = spot.y + deltas[i][1];
+    var row = grid[y];
+    if (row && (row[x] === T.GRASS || row[x] === T.ROAD || row[x] === T.SAND)) return { x: x, y: y };
+  }
+  return spot; // fallback: standing on the marker itself is harmless anyway
+}
+
+// Pairs each living party member with their "nearest" living monster by
+// formation slot index (closest-index matching, wrapping if the groups are
+// ============================================================
+// SPATIAL COMBAT HELPERS
+// ============================================================
+function dist(ax, ay, bx, by) { return Math.abs(ax - bx) + Math.abs(ay - by); }
+
+function livingMonsters() { return combat.monsters.filter(function (m) { return m.hp > 0; }); }
+function alivePartyIdx() {
+  var out = [];
+  for (var i = 0; i < party.length; i++) if (party[i].alive) out.push(i);
+  return out;
+}
+
+function arenaTileFree(x, y, exceptEntity) {
+  if (x <= 0 || y <= 0 || x >= ARENA_W - 1 || y >= ARENA_H - 1) return false;
+  var occupied = false;
+  party.forEach(function (p) {
+    if (p !== exceptEntity && p.alive && p.ax === x && p.ay === y) occupied = true;
+  });
+  combat.monsters.forEach(function (m) {
+    if (m !== exceptEntity && m.hp > 0 && m.x === x && m.y === y) occupied = true;
+  });
+  return !occupied;
+}
+
+// One step toward a target tile, or null if already adjacent/blocked.
+function stepToward(fromX, fromY, toX, toY, exceptEntity) {
+  var dx = toX - fromX, dy = toY - fromY;
+  if (Math.abs(dx) + Math.abs(dy) <= 1) return null; // already adjacent
+  var stepX = dx === 0 ? 0 : (dx > 0 ? 1 : -1);
+  var stepY = dy === 0 ? 0 : (dy > 0 ? 1 : -1);
+  // prefer the axis with the larger gap; fall back to the other if blocked
+  if (Math.abs(dx) >= Math.abs(dy) && stepX !== 0 && arenaTileFree(fromX + stepX, fromY, exceptEntity)) {
+    return { x: fromX + stepX, y: fromY };
+  }
+  if (stepY !== 0 && arenaTileFree(fromX, fromY + stepY, exceptEntity)) {
+    return { x: fromX, y: fromY + stepY };
+  }
+  if (stepX !== 0 && arenaTileFree(fromX + stepX, fromY, exceptEntity)) {
+    return { x: fromX + stepX, y: fromY };
+  }
+  return null;
+}
+
+// ---------- monster AI: prefer the lowest-HP reachable party member,
+// and mildly avoid stacking onto a tile another monster is already
+// heading for (a light "spread out" tendency) ----------
+function chooseMonsterTarget(m) {
+  var idxs = alivePartyIdx();
+  if (idxs.length === 0) return null;
+  var best = null, bestScore = Infinity;
+  idxs.forEach(function (i) {
+    var p = party[i];
+    var d = dist(m.x, m.y, p.ax, p.ay);
+    var hpFactor = p.hp / p.maxHp; // lower current HP fraction = juicier target
+    var score = d * 1.0 + hpFactor * 3.0;
+    if (score < bestScore) { bestScore = score; best = i; }
+  });
+  return best;
+}
+
+function monsterAct(m) {
+  var targetIdx = chooseMonsterTarget(m);
+  if (targetIdx === null) return;
+  var p = party[targetIdx];
+  var def = findMonsterDef(m.baseName || m.name);
+  var isRanged = def && def.ranged;
+  var range = isRanged ? 4 : 1;
+  var d = dist(m.x, m.y, p.ax, p.ay);
+  if (d <= range) {
+    var dmg = Math.max(0, rollRange(m.dmg) - p.armorBonus);
+    p.hp -= dmg;
+    pushLog(m.name + (isRanged ? " casts a bolt at " : " attacks ") + p.name + "!");
+    pushLog(p.name + " takes " + dmg + " dmg");
+    if (p.hp <= 0) {
+      p.hp = 0; p.alive = false;
+      pushLog(p.name + " has fallen!");
+    }
+    // ranged monsters hold their ground once in range rather than closing
+    // in further, keeping their distance like a real caster
+  } else {
+    var step = stepToward(m.x, m.y, p.ax, p.ay, m);
+    if (step) { m.x = step.x; m.y = step.y; }
+  }
+}
+
+// ---------- auto party member AI: walk toward nearest monster, attack
+// when adjacent ----------
+function nearestMonsterTo(x, y) {
+  var living = livingMonsters();
+  if (living.length === 0) return null;
+  var best = null, bestD = Infinity;
+  living.forEach(function (m) {
+    var d = dist(x, y, m.x, m.y);
+    if (d < bestD) { bestD = d; best = m; }
+  });
+  return best;
+}
+
+function partyMemberAct(p, idx) {
+  var target = nearestMonsterTo(p.ax, p.ay);
+  if (!target) return;
+  if (dist(p.ax, p.ay, target.x, target.y) <= 1) {
+    var dmg = 1 + Math.floor(Math.random() * 5) + p.weaponBonus;
+    var hit = Math.random() < 0.75;
+    if (!hit) {
+      pushLog(p.name + " misses " + target.name + ".");
+    } else {
+      target.hp -= dmg;
+      pushLog(p.name + " hits " + target.name + " for " + dmg + ".");
+      if (target.hp <= 0) {
+        pushLog(target.name + " destroyed!");
+        registerKill(target, idx);
+      }
+    }
+  } else {
+    var step = stepToward(p.ax, p.ay, target.x, target.y, p);
+    if (step) { p.ax = step.x; p.ay = step.y; }
+  }
+}
+
+// Runs one full combat tick: auto party members act, then every living
+// monster acts, then checks for victory/defeat. Called after the player's
+// own move/attack each keypress, so the whole skirmish advances together.
+function combatTick(actingIdx) {
+  if (!combat) return;
+  for (var i = 0; i < party.length; i++) {
+    if (i === actingIdx) continue; // player already acted this tick
+    if (!party[i].alive) continue;
+    partyMemberAct(party[i], i);
+  }
+  if (livingMonsters().length === 0) { endCombatVictory(); return; }
+  livingMonsters().forEach(function (m) { monsterAct(m); });
+  if (!partyAlive()) {
+    pushLog("-----Party defeated-----");
+    // Only the leader is restored — everyone else stays dead until
+    // revived (and paid for) at a healer, same as any other fall.
+    party[0].alive = true;
+    party[0].hp = party[0].maxHp;
+    sharedGold = Math.floor(sharedGold * 0.5);
+    state.mode = combat.returnMode;
+    combat = null;
+    respawnAfterDefeat();
+    pushLog("You wake at the hospital. Half your gold is gone.");
+    if (party.some(function (p, i) { return i > 0 && !p.alive; })) {
+      pushLog("The rest of your party lies fallen. Revive them here.");
+    }
+    renderAll();
+    return;
+  }
+  renderAll();
+}
+
+// ---------- player movement/attack within the arena ----------
+function arenaMove(dx, dy) {
+  if (!combat || confirmingRun || awaitingShotDirection) return;
+  var leader = party[0];
+  var nx = leader.ax + dx, ny = leader.ay + dy;
+
+  // bump-to-attack: if a living monster occupies the destination tile,
+  // attack it instead of moving
+  var bumped = combat.monsters.find(function (m) { return m.hp > 0 && m.x === nx && m.y === ny; });
+  if (bumped) {
+    var dmg = 2 + Math.floor(Math.random() * 6) + leader.weaponBonus;
+    var hit = Math.random() < 0.8;
+    pushLog("-----" + leader.name + "-----");
+    pushLog("Attacks " + bumped.name + "!");
+    if (!hit) {
+      pushLog("Missed!");
+    } else {
+      bumped.hp -= dmg;
+      pushLog("Hit! Dam:" + dmg);
+      if (bumped.hp <= 0) {
+        pushLog(bumped.name + " destroyed!");
+        registerKill(bumped, 0);
+      }
+    }
+    combatTick(0);
+    return;
+  }
+
+  if (arenaTileFree(nx, ny, leader)) {
+    leader.ax = nx; leader.ay = ny;
+  }
+  combatTick(0);
+}
+
+// Leader "attacks" via the ATTACK button without needing a bump — swings
+// at whichever monster is already adjacent, if any.
+function combatPlayerAttack() {
+  if (!combat || confirmingRun || awaitingShotDirection) return;
+  var leader = party[0];
+  // If a ranged weapon (Bow/Boomerang) is equipped, ATTACK works the same
+  // as SHOOT — no need to force a separate button for it.
+  if (leader.equippedWeapon && leader.equippedWeapon.ranged) {
+    cmdShoot();
+    return;
+  }
+  var target = combat.monsters.find(function (m) {
+    return m.hp > 0 && dist(leader.ax, leader.ay, m.x, m.y) <= 1;
+  });
+  if (!target) { pushLog("No one in reach."); renderAll(); return; }
+  var dmg = 2 + Math.floor(Math.random() * 6) + leader.weaponBonus;
+  var hit = Math.random() < 0.8;
+  pushLog("-----" + leader.name + "-----");
+  pushLog("Attacks " + target.name + "!");
+  if (!hit) {
+    pushLog("Missed!");
+  } else {
+    target.hp -= dmg;
+    pushLog("Hit! Dam:" + dmg);
+    if (target.hp <= 0) {
+      pushLog(target.name + " destroyed!");
+      registerKill(target, 0);
+    }
+  }
+  combatTick(0);
+}
+
+// Triggers the "which way?" prompt for a ranged weapon shot (Bow or
+// Boomerang) — only available while that weapon is actually equipped and
+// a fight is underway.
+function cmdShoot() {
+  if (!combat || confirmingRun || townScreen) return;
+  var leader = party[0];
+  var w = leader.equippedWeapon;
+  if (!w || !w.ranged) { pushLog("No ranged weapon equipped."); renderAll(); return; }
+  awaitingShotDirection = true;
+  pushLog("Take aim! Choose a direction (arrow keys).");
+  renderAll();
+}
+
+// Resolves a Bow or Boomerang shot: scans up to `range` tiles in a
+// straight line from the leader's arena position, hits the first living
+// monster found. A Boomerang that connects hits twice (out and back).
+function fireRangedWeapon(dir) {
+  awaitingShotDirection = false;
+  if (!combat) { renderAll(); return; }
+  var leader = party[0];
+  var w = leader.equippedWeapon;
+  var deltas = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] };
+  var d = deltas[dir];
+  if (!d || !w) { renderAll(); return; }
+
+  var hitMonster = null;
+  for (var step = 1; step <= w.range; step++) {
+    var cx = leader.ax + d[0] * step, cy = leader.ay + d[1] * step;
+    var found = combat.monsters.find(function (m) { return m.hp > 0 && m.x === cx && m.y === cy; });
+    if (found) { hitMonster = found; break; }
+  }
+  pushLog("-----" + leader.name + "-----");
+  pushLog("Fires the " + w.name + " " + facingWord(dir) + "!");
+  if (!hitMonster) {
+    pushLog("The shot flies wide.");
+    combatTick(0);
+    return;
+  }
+  var shots = w.returns ? 2 : 1; // Boomerang hits going out AND coming back
+  for (var s = 0; s < shots; s++) {
+    if (hitMonster.hp <= 0) break;
+    var dmg = 2 + Math.floor(Math.random() * 6) + w.dmgBonus;
+    hitMonster.hp -= dmg;
+    pushLog((s === 0 ? "Hit! " : "It returns and hits again! ") + "Dam:" + dmg);
+  }
+  if (hitMonster.hp <= 0) {
+    pushLog(hitMonster.name + " destroyed!");
+    registerKill(hitMonster, 0);
+  }
+  combatTick(0);
+}
+
+function facingWord(f) {
+  return { N: "North", S: "South", E: "East", W: "West" }[f] || "South";
+}
+
+// Handles ONE dpad press while sailing on open water, applying wind speed.
+// Returns true if it fully handled the input (caller should stop), or
+// false to let the normal single-tile logic in move() run instead — used
+// for edge cases like disembarking onto land or reaching a landmark,
+// which stay single-tile events regardless of wind.
+function sailingMove(dx, dy, facing) {
+  var firstX = state.x + dx, firstY = state.y + dy;
+  var firstTile = tileAt(firstX, firstY);
+  // Only take over for a pure open-water step. Anything else (disembarking
+  // onto land, reaching the island marker, sailing off the island's edge)
+  // falls through to the normal single-tile handling in move().
+  if (firstTile !== T.WATER) return false;
+
+  var speed = sailSpeedFor(facing);
+  maybeShiftWind();
+
+  if (speed.blocked) {
+    pushLog(speed.tiles === 0 ? "Dead calm. The ship drifts." : "Sailing against the wind — no progress.");
+    stepMapMonsters();
+    renderAll();
+    return true;
+  }
+
+  var moved = false;
+  for (var i = 0; i < speed.tiles; i++) {
+    var nx2 = state.x + dx, ny2 = state.y + dy;
+    var t2 = tileAt(nx2, ny2);
+    if (t2 !== T.WATER) break; // stop before leaving open water — let a
+    // follow-up press handle the actual landfall/disembark tile-by-tile
+    var wrapped2 = wrapPos(nx2, ny2);
+    state.x = wrapped2.x; state.y = wrapped2.y;
+    moved = true;
+  }
+  if (moved) {
+    pushLog(facingWord(facing) + (speed.tiles > 1 ? " (favorable wind!)" : ""));
+  } else {
+    pushLog("Blocked.");
+  }
+
+  // Rare ocean hazards: a tornado or tsunami can strike while sailing,
+  // dealing 50% of current HP to the whole party. The tornado also
+  // wanders randomly on its own (visualized on the map), while the
+  // tsunami is a one-off wave with no persistent presence.
+  tryOceanHazard();
+
+  tryPirateEncounter();
+  stepMapMonsters();
+  renderAll();
+  return true;
+}
+
+// Finds a water tile just off the island's coastline (near the top of
+// the map, so arriving still reads as "sailing in from the north") —
+// used because the island's landmass is centered in a much larger grid
+// now, so a fixed top-row arrival point would usually be far out at sea.
+function findIslandArrivalSpot() {
+  var midC = Math.floor(ISLAND_W / 2);
+  for (var r = 1; r < ISLAND_H - 1; r++) {
+    for (var dc = 0; dc < ISLAND_W; dc++) {
+      var c = midC + (dc % 2 === 0 ? dc / 2 : -(dc + 1) / 2);
+      if (c < 1 || c >= ISLAND_W - 1) continue;
+      if (islandGrid[r][c] !== T.WATER) continue;
+      // require it to actually be adjacent to land — real coastline, not
+      // just any patch of open ocean
+      var deltas = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+      for (var i = 0; i < deltas.length; i++) {
+        var rr = r + deltas[i][0], cc = c + deltas[i][1];
+        if (islandGrid[rr] && islandGrid[rr][cc] === T.GRASS) return { x: c, y: r };
+      }
+    }
+  }
+  return { x: midC, y: 1 }; // fallback, shouldn't normally be hit
+}
+
+function move(dx, dy) {
+  if (state.mode === "combat" || townScreen || awaitingCannonDirection) return;
+  var facing = dx === -1 ? "W" : dx === 1 ? "E" : dy === -1 ? "N" : dy === 1 ? "S" : state.facing;
+  state.facing = facing;
+
+  // Sailing on open water: wind governs how far (and whether) this press
+  // actually moves you. Land movement, boarding, and disembarking are
+  // untouched — this only applies once you're already sailing.
+  if (state.sailing) {
+    var handled = sailingMove(dx, dy, facing);
+    if (handled) return;
+  }
+
+  var nx = state.x + dx, ny = state.y + dy;
+  var t = tileAt(nx, ny);
+
+  if (t === T.DOOR) {
+    if (state.mode === "town" || state.mode === "dungeon") {
+      state.mode = "overworld";
+      state.x = state.fromOverworld.x;
+      state.y = state.fromOverworld.y;
+      pushLog(facingWord(facing));
+      renderAll();
+      return;
+    }
+    if (state.mode === "islandTown") {
+      state.mode = "island";
+      state.x = state.fromIsland.x;
+      state.y = state.fromIsland.y;
+      pushLog(facingWord(facing));
+      renderAll();
+      return;
+    }
+    if (state.mode === "moonTown") {
+      state.mode = "moon";
+      state.x = state.fromMoon.x;
+      state.y = state.fromMoon.y;
+      pushLog(facingWord(facing));
+      renderAll();
+      return;
+    }
+    if (state.mode === "hutInterior" || state.mode === "churchInterior") {
+      state.mode = state.fromBuilding.mode;
+      state.x = state.fromBuilding.x;
+      state.y = state.fromBuilding.y;
+      pushLog(facingWord(facing));
+      renderAll();
+      return;
+    }
+  }
+  // Auto-dismount at any town/castle gate — horses aren't allowed inside,
+  // so park it right at the threshold (the tile you're standing on) and
+  // walk in on foot.
+  if (t === T.TOWN && state.mounted) {
+    state.mounted = false;
+    horse.owned = true;
+    horse.screen = state.mode;
+    horse.x = state.x; horse.y = state.y;
+    pushLog("You leave your horse outside and enter on foot.");
+  }
+
+  if (t === T.TOWN && state.mode === "overworld") {
+    state.fromOverworld = { x: state.x, y: state.y };
+    state.mode = "town";
+    state.x = 22; state.y = 38; // just inside the south gate
+    pushLog("Enter town");
+    renderAll();
+    return;
+  }
+  if (t === T.TOWN && state.mode === "island") {
+    state.fromIsland = { x: state.x, y: state.y };
+    state.mode = "islandTown";
+    state.x = 11; state.y = 16; // just inside the south gate
+    pushLog("Enter town");
+    renderAll();
+    return;
+  }
+  if (t === T.PORTAL && state.mode === "island") {
+    state.fromIsland = { x: state.x, y: state.y };
+    state.mode = "moon";
+    var moonMidR = Math.floor(MOON_H / 2), moonMidC = Math.floor(MOON_W / 2);
+    state.x = moonMidC; state.y = moonMidR + 4;
+    pushLog("The portal pulls you through... you arrive on a grey moon.");
+    renderAll();
+    return;
+  }
+  if (t === T.MOON_PORTAL && state.mode === "moon") {
+    state.mode = "island";
+    state.x = state.fromIsland.x; state.y = state.fromIsland.y;
+    pushLog("The portal returns you to the island.");
+    renderAll();
+    return;
+  }
+  if (t === T.TOWN && state.mode === "moon") {
+    state.fromMoon = { x: state.x, y: state.y };
+    state.mode = "moonTown";
+    state.x = 7; state.y = 10;
+    pushLog("Enter Luna Station");
+    renderAll();
+    return;
+  }
+  if (t === T.DUNGEON && state.mode === "overworld") {
+    state.fromOverworld = { x: state.x, y: state.y };
+    state.mode = "dungeon";
+    state.x = 1; state.y = 1;
+    pushLog("Descend");
+    renderAll();
+    return;
+  }
+  if (t === T.ISLAND && state.mode === "overworld") {
+    state.fromOverworld = { x: state.x, y: state.y };
+    state.mode = "island";
+    // arrive somewhere sailable near the island's own coastline (its
+    // landmass is centered in a much bigger grid now, so the old fixed
+    // "row 1" arrival point would usually land in open ocean)
+    var arrival = findIslandArrivalSpot();
+    state.x = arrival.x; state.y = arrival.y;
+    pushLog("Landfall! A new island.");
+    renderAll();
+    return;
+  }
+  // Sailing off the edge of the island's own small grid takes you back out
+  // to the open ocean of the main overworld, docking right at the spot
+  // where you first made landfall.
+  if (t === null && state.mode === "island" && state.sailing) {
+    state.mode = "overworld";
+    ship.owned = true;
+    ship.screen = "overworld";
+    ship.x = state.fromOverworld.x;
+    ship.y = state.fromOverworld.y;
+    state.x = state.fromOverworld.x;
+    state.y = state.fromOverworld.y;
+    state.sailing = true; // still aboard — arriving back on the open sea
+    pushLog("You sail back out to open water.");
+    renderAll();
+    return;
+  }
+  if (t === T.SHOPKEEP) { openShop("weapon"); return; }
+  if (t === T.ARMORY) { openShop("armor"); return; }
+  if (t === T.KING) { openKing(); return; }
+  if (t === T.CHEST) { openVaultChest(nx, ny); return; }
+  if (t === T.HUT_NPC) { openHutGift(); return; }
+  if (t === T.STABLE) { openStable(); return; }
+  if (t === T.MOON_SHOP) { openMoonShop(); return; }
+  if (t === T.HUT) {
+    state.fromBuilding = { mode: state.mode, x: state.x, y: state.y };
+    state.mode = "hutInterior";
+    state.x = 4; state.y = 6; // just inside the door
+    pushLog("You step into the hut.");
+    renderAll();
+    return;
+  }
+  if (t === T.CHURCH) {
+    state.fromBuilding = { mode: state.mode, x: state.x, y: state.y };
+    state.mode = "churchInterior";
+    state.x = 5; state.y = 7;
+    pushLog("You step into the church.");
+    renderAll();
+    return;
+  }
+  if (t === T.GARDEN_FOUNTAIN) { drinkGardenFountain(); return; }
+  if (t === T.MOAI) { pushLog("An ancient moai gazes back at you, weathered and silent."); renderAll(); return; }
+  if (t === T.SHRINE) { pushLog("A small shrine. You bow your head for a moment of quiet."); renderAll(); return; }
+  if (t === T.GRAVE) { pushLog("A worn headstone. You can't make out the name."); renderAll(); return; }
+  if (t === T.INNKEEPER) {
+    if (sharedGold >= 10) {
+      sharedGold -= 10;
+      party.forEach(function (p) { if (p.alive) p.hp = p.maxHp; });
+      pushLog("Rested. -10G");
+    } else {
+      pushLog("Not enough gold");
+    }
+    renderAll();
+    return;
+  }
+  if (t === T.TAVERN) { openTavern(); return; }
+  if (t === T.FOUNTAIN) { openFountain(); return; }
+  if (t === T.HEALER) { openHealer(); return; }
+  if (t === T.HORSE) {
+    pushLog("A wild horse! Get close and TAME it.");
+    renderAll();
+    return;
+  }
+  // Remounting any parked vehicle (horse/car/helicopter): check its
+  // tracked position directly, same pattern as the ship.
+  var remountCheck = [
+    { type: "horse", obj: horse },
+    { type: "car", obj: car },
+    { type: "helicopter", obj: helicopter }
+  ].find(function (v) {
+    return v.obj.owned && !state.mounted && v.obj.screen === state.mode && v.obj.x === nx && v.obj.y === ny;
+  });
+  if (remountCheck) {
+    state.mounted = true;
+    state.vehicleType = remountCheck.type;
+    var wrappedVeh = wrapPos(nx, ny);
+    state.x = wrappedVeh.x; state.y = wrappedVeh.y;
+    pushLog("You hop back on the " + remountCheck.type + ".");
+    renderAll();
+    return;
+  }
+  // Boarding the parked rocket: flies to the moon (if boarded on the
+  // overworld) or flies home (if boarded at the fixed moon pad) —
+  // instant travel, no direction/movement involved like the ship.
+  if (rocket.owned && rocket.screen === state.mode && rocket.x === nx && rocket.y === ny) {
+    if (state.mode === "moon") {
+      state.mode = "overworld";
+      state.x = rocket.overworldX; state.y = rocket.overworldY;
+      rocket.screen = "overworld";
+      rocket.x = rocket.overworldX; rocket.y = rocket.overworldY;
+      pushLog("The rocket carries you home to the overworld.");
+    } else {
+      rocket.overworldX = rocket.x; rocket.overworldY = rocket.y; // remember where to return to
+      state.mode = "moon";
+      state.x = ROCKET_MOON_PAD.x; state.y = ROCKET_MOON_PAD.y;
+      rocket.screen = "moon";
+      rocket.x = ROCKET_MOON_PAD.x; rocket.y = ROCKET_MOON_PAD.y;
+      pushLog("The rocket blasts off for the moon!");
+    }
+    renderAll();
+    return;
+  }
+  // Boarding your own ship: check its tracked position directly, since
+  // the ship is drawn as a dynamic overlay and is never actually written
+  // into the map grid itself.
+  if (ship.owned && !state.sailing && ship.screen === state.mode && ship.x === nx && ship.y === ny) {
+    state.sailing = true;
+    var wrappedB = wrapPos(nx, ny);
+    state.x = wrappedB.x; state.y = wrappedB.y;
+    pushLog("You board the ship and set sail!");
+    renderAll();
+    return;
+  }
+  if (t === T.SHIP) {
+    // any wild ship is freely boardable on sight — claim it into the
+    // dynamic ship object and set sail immediately. Clear the static
+    // landmark tile back to grass so it doesn't stay boardable forever
+    // (this was creating infinite duplicate ships).
+    var wrappedS = wrapPos(nx, ny);
+    currentGrid()[wrappedS.y][wrappedS.x] = T.GRASS;
+    ship.owned = true;
+    ship.screen = state.mode;
+    ship.x = wrappedS.x; ship.y = wrappedS.y;
+    state.sailing = true;
+    state.x = wrappedS.x; state.y = wrappedS.y;
+    pushLog("You board the abandoned ship and set sail!");
+    renderAll();
+    return;
+  }
+  if (!isWalkable(t)) { pushLog(facingWord(facing)); renderAll(); return; }
+
+  // Forest has a chance to "slip" — the step fails and you stay put,
+  // same rule applies to wandering monsters for symmetry.
+  if (t === T.FOREST && Math.random() < 0.5) {
+    pushLog("Thick brush! " + facingWord(facing) + " (no progress)");
+    if (state.mode === "overworld" || state.mode === "dungeon" || state.mode === "island") stepMapMonsters();
+    renderAll();
+    return;
+  }
+
+  // Disembarking: you're sailing and about to step onto solid ground —
+  // the ship stays behind, parked at your current (water) tile, exactly
+  // where you left it.
+  if (state.sailing && t !== T.WATER && t !== T.ISLAND) {
+    ship.owned = true;
+    ship.screen = state.mode;
+    ship.x = state.x; ship.y = state.y;
+    state.sailing = false;
+    pushLog("You disembark. The ship waits at the shore.");
+  }
+
+  var wrappedMove = wrapPos(nx, ny);
+  state.x = wrappedMove.x; state.y = wrappedMove.y;
+  pushLog(facingWord(facing));
+
+  // mounted: on open ground (not forest, which is unreachable while
+  // mounted anyway) take a second step in the same direction if possible
+  if (state.mounted && (state.mode === "overworld" || state.mode === "island")) {
+    var extraSteps = Math.floor(vehicleSpeed(state.vehicleType || "horse")) - 1; // total tiles minus the one already taken above
+    for (var vs = 0; vs < extraSteps; vs++) {
+      var nx2 = state.x + dx, ny2 = state.y + dy;
+      var t2 = tileAt(nx2, ny2);
+      var landsOnOwnedShip = ship.owned && !state.sailing && ship.screen === state.mode && ship.x === nx2 && ship.y === ny2;
+      var landsOnOwnedVehicle = [horse, car, helicopter].some(function (v) {
+        return v.owned && v.screen === state.mode && v.x === nx2 && v.y === ny2;
+      });
+      if (t2 !== null && isWalkable(t2) && !landsOnOwnedShip && !landsOnOwnedVehicle && t2 !== T.TOWN && t2 !== T.DUNGEON && t2 !== T.DOOR && t2 !== T.HORSE && t2 !== T.SHIP && t2 !== T.ISLAND) {
+        var wrappedMount = wrapPos(nx2, ny2);
+        state.x = wrappedMount.x; state.y = wrappedMount.y;
+      } else {
+        break; // stop early if blocked, don't skip past an obstacle
+      }
+    }
+  }
+
+  // ground item auto-notice (still requires GET to actually pick up)
+  var here = groundItemAt(state.mode, state.x, state.y);
+  if (here) {
+    pushLog(here.kind === "gold" ? "Chest here. GET" : here.item.name + " here. GET");
+  }
+
+  if (state.mode === "overworld" || state.mode === "dungeon" || state.mode === "island") {
+    tryEncounter();
+    tryPirateEncounter();
+    trySpawnWildHorse();
+    tryVolcanoBurn();
+    stepMapMonsters();
+  } else if (state.mode === "moon") {
+    tryAlienEncounter();
+    tryVolcanoBurn();
+  } else if (state.mode === "town" || state.mode === "islandTown") {
+    tryGuardTrouble();
+    stepAllRoamingEntities();
+  }
+  renderAll();
+}
+
+// Very rare town scuffle — a guard, a bothered local, or a drunk picks a
+// fight. Uses the same brick/castle-style arena as the dungeon.
+function tryGuardTrouble() {
+  if (Math.random() < 0.0015) {
+    pushLog("A guard confronts you!");
+    var group = buildMonsterGroup(GUARD_DEF, true);
+    enterArena(group, state.mode, "guard");
+  }
+}
+
+// ============================================================
+// COMMANDS
+// ============================================================
+function cmdGet() {
+  if (townScreen || confirmingRun) return;
+  // if a roaming shopkeeper is right next to you, GET doubles as "talk to
+  // them" and opens their shop, since they're no longer a fixed tile to
+  // walk onto directly
+  var npc = roamingNpcAdjacent();
+  if (npc) { openShop(npc.kind === "armory" ? "armor" : "weapon"); return; }
+  var here = groundItemAt(state.mode, state.x, state.y);
+  if (!here) { pushLog("Nothing to get"); renderAll(); return; }
+  if (here.kind === "gold") {
+    var g = 5 + Math.floor(Math.random() * 20);
+    sharedGold += g;
+    pushLog("Found " + g + " gold!");
+  } else if (here.category === "potion") {
+    potionCount += 1;
+    pushLog("Got " + here.item.name + "!");
+  } else if (here.category === "weapon") {
+    var leader = party[0];
+    leader.weaponBonus = Math.max(leader.weaponBonus, here.item.dmgBonus);
+    leader.equippedWeapon = here.item;
+    pushLog(leader.name + " equips " + here.item.name + "!");
+  } else if (here.category === "armor") {
+    var leader2 = party[0];
+    leader2.armorBonus = Math.max(leader2.armorBonus, here.item.defBonus);
+    pushLog(leader2.name + " equips " + here.item.name + "!");
+  }
+  removeGroundItem(here);
+  renderAll();
+}
+
+function cmdCast() {
+  if (townScreen || confirmingRun) return;
+  var wiz = party[2];
+  if (!wiz.alive || wiz.mana < 3) { pushLog(wiz.name + " cannot cast"); renderAll(); return; }
+  if (state.mode === "combat" && combat) {
+    wiz.mana -= 3;
+    var target = nearestMonsterTo(wiz.ax, wiz.ay);
+    if (target) {
+      var dmg = 4 + Math.floor(Math.random() * 6);
+      target.hp -= dmg;
+      pushLog(wiz.name + " casts Missile at " + target.name + "!");
+      pushLog(target.name + " takes " + dmg + " dmg");
+      if (target.hp <= 0) {
+        pushLog(target.name + " destroyed!");
+        registerKill(target, 2);
+      }
+      combatTick(2);
+    }
+  } else {
+    wiz.mana -= 3;
+    pushLog(wiz.name + " casts Light");
+    renderAll();
+  }
+}
+
+function cmdStats() {
+  if (townScreen || confirmingRun) return;
+  party.forEach(function (p) {
+    var line = p.name + (p.title ? " \"" + p.title + "\"" : "") + " " + p.cls + " L" + p.lvl + " H" + p.hp + "/" + p.maxHp;
+    pushLog(line);
+  });
+  renderAll();
+}
+
+var confirmingRun = false;
+var awaitingCannonDirection = false; // true while the "which way?" prompt is up
+var awaitingShotDirection = false; // same idea, but for the Bow/Boomerang inside combat
+
+function cmdFire() {
+  if (townScreen || confirmingRun) return;
+  if (!state.sailing || state.mode === "combat") { pushLog("No cannon to fire here."); renderAll(); return; }
+  awaitingCannonDirection = true;
+  pushLog("Fire! Choose a direction (arrow keys).");
+  renderAll();
+}
+
+function cmdDismount() {
+  if (townScreen || confirmingRun || state.mode === "combat") return;
+  if (!state.mounted) { pushLog("Not mounted."); renderAll(); return; }
+  var vType = state.vehicleType || "horse";
+  var vObj = vehicleObj(vType);
+  state.mounted = false;
+  state.vehicleType = null;
+  vObj.owned = true;
+  vObj.screen = state.mode;
+  vObj.x = state.x; vObj.y = state.y;
+  pushLog("You dismount. The " + vType + " waits here.");
+  renderAll();
+}
+
+// Fires the cannon in the given direction: 6-tile range, hits the first
+// wandering monster in a straight line (only aquatic monsters/pirates are
+// ever actually out on the water to hit), heavy damage.
+function fireCannon(dir) {
+  awaitingCannonDirection = false;
+  var deltas = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] };
+  var d = deltas[dir];
+  if (!d) { renderAll(); return; }
+  var hitMonster = null;
+  for (var step = 1; step <= 6; step++) {
+    var cx = state.x + d[0] * step, cy = state.y + d[1] * step;
+    var found = mapMonsters.find(function (m) {
+      return m.screen === state.mode && m.x === cx && m.y === cy;
+    });
+    if (found) { hitMonster = found; break; }
+  }
+  pushLog("BOOM! Cannon fires " + facingWord(dir) + ".");
+  if (!hitMonster) {
+    pushLog("The shot splashes into the sea.");
+    renderAll();
+    return;
+  }
+  // resolve as an instant, decisive kill-oriented hit: pull it straight
+  // into a one-monster arena fight, already heavily damaged, so a good
+  // cannon shot can end the fight in a hit or two
+  var def = findMonsterDef(hitMonster.name);
+  if (!def) { renderAll(); return; }
+  var instance = makeMonsterInstance(def, 0, 0);
+  var cannonDmg = 14 + Math.floor(Math.random() * 10);
+  instance.hp -= cannonDmg;
+  pushLog("Direct hit! " + hitMonster.name + " takes " + cannonDmg + " cannon damage!");
+  // remove it from the wandering list either way — it's now either dead
+  // or about to fight you at point-blank range
+  mapMonsters = mapMonsters.filter(function (m) { return m !== hitMonster; });
+  if (instance.hp <= 0) {
+    pushLog(hitMonster.name + " is destroyed by the blast!");
+    var g = rollRange(instance.gold);
+    sharedGold += g;
+    pushLog("+" + g + "g salvaged from the wreck.");
+    renderAll();
+    return;
+  }
+  enterArena([instance], state.mode, null, hitMonster.aquatic ? "coastal" : null);
+}
+
+function cmdRun() {
+  if (townScreen) return;
+  if (state.mode !== "combat") { pushLog("Nothing to run from"); renderAll(); return; }
+  confirmingRun = true;
+  renderAll();
+}
+
+function confirmRunYes() {
+  confirmingRun = false;
+  if (Math.random() < 0.6) {
+    var tier = combat.monsters[0] ? combat.monsters[0].tier : 0;
+    var lootPct = 0.10 + Math.min(0.10, tier * 0.03); // 10-20%+ scaling with tier
+    var lost = Math.floor(sharedGold * lootPct);
+    sharedGold -= lost;
+    pushLog("Escaped! Monsters loot " + lost + "g.");
+    state.mode = combat.returnMode;
+    combat = null;
+  } else {
+    pushLog("Cannot escape!");
+    combatTick(-1); // -1: no party member "acted" this tick, everyone auto-acts
+    return;
+  }
+  renderAll();
+}
+
+function confirmRunNo() {
+  confirmingRun = false;
+  renderAll();
+}
+
+// ============================================================
+// TOWN SERVICES — shop, tavern (recruit/retire), fountain (heal/revive)
+// ============================================================
+var townScreen = null; // null | "shop" | "tavern" | "fountain"
+var tavernRecruit = null;
+
+var RACES = ["Human", "Elf", "Dwarf", "Halfling", "Gnome"];
+var CLASSES = [
+  { code: "FTR", label: "Fighter" },
+  { code: "CLR", label: "Cleric" },
+  { code: "WIZ", label: "Wizard" },
+  { code: "THF", label: "Thief" },
+  { code: "BRB", label: "Barbarian" },
+  { code: "RNG", label: "Ranger" }
+];
+var NAME_POOL = ["Alaric", "Brynn", "Corwin", "Dara", "Edric", "Fenna", "Garrick", "Hale", "Isolde", "Jorah"];
+
+function generateRecruit() {
+  var cls = CLASSES[Math.floor(Math.random() * CLASSES.length)];
+  var race = RACES[Math.floor(Math.random() * RACES.length)];
+  var name = NAME_POOL[Math.floor(Math.random() * NAME_POOL.length)];
+  var isCaster = cls.code === "CLR" || cls.code === "WIZ";
+  var maxHp = 14 + Math.floor(Math.random() * 14);
+  return {
+    name: name, cls: cls.code, clsLabel: cls.label, race: race,
+    mana: isCaster ? 10 + Math.floor(Math.random() * 10) : 0,
+    lvl: 1, xp: 0, hp: maxHp, maxHp: maxHp, food: 73,
+    color: "#cc88ff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0
+  };
+}
+
+function openShop(category) {
+  townScreen = category === "armor" ? "armory" : "shop";
+  pushLog(category === "armor" ? "-----Armory-----" : "-----Weaponsmith-----");
+  pushLog(category === "armor" ? "Armor for sale." : "Weapons and potions for sale.");
+  renderAll();
+}
+function openKing() {
+  townScreen = "king";
+  pushLog("-----Throne Room-----");
+  pushLog("The King nods, but has no words for you yet.");
+  renderAll();
+}
+function openVaultChest(x, y) {
+  var grid = currentGrid();
+  if (grid[y][x] !== T.CHEST) { renderAll(); return; } // already looted
+  var gold = 20 + Math.floor(Math.random() * 61); // 20-80
+  sharedGold += gold;
+  grid[y][x] = T.FLOOR; // one-time loot, stays empty afterward
+  pushLog("-----Royal Treasury-----");
+  pushLog("You find " + gold + " gold!");
+  pushLog("Guards burst in — you've triggered an alarm!");
+  var count = 2 + Math.floor(Math.random() * 2); // 2-3 elite guards
+  var group = [];
+  for (var i = 0; i < count; i++) group.push(makeMonsterInstance(ELITE_GUARD_DEF, 0, 0));
+  enterArena(group, state.mode, "guard");
+}
+function openStable() {
+  townScreen = "stable";
+  pushLog("-----Stable-----");
+  pushLog("A sturdy horse, yours for 50 gold.");
+  renderAll();
+}
+function buyHorseFromStable() {
+  if (state.mounted) { pushLog("Already mounted."); renderAll(); return; }
+  if (sharedGold < 50) { pushLog("Not enough gold"); renderAll(); return; }
+  sharedGold -= 50;
+  state.mounted = true;
+  state.vehicleType = "horse";
+  pushLog("You buy a horse and mount up! -50g");
+  renderAll();
+}
+function buyCarFromStable() {
+  if (state.mounted) { pushLog("Already mounted."); renderAll(); return; }
+  if (sharedGold < 150) { pushLog("Not enough gold"); renderAll(); return; }
+  sharedGold -= 150;
+  state.mounted = true;
+  state.vehicleType = "car";
+  pushLog("You buy a race car and speed off! -150g");
+  renderAll();
+}
+function buyHelicopterFromStable() {
+  if (state.mounted) { pushLog("Already mounted."); renderAll(); return; }
+  if (sharedGold < 400) { pushLog("Not enough gold"); renderAll(); return; }
+  sharedGold -= 400;
+  state.mounted = true;
+  state.vehicleType = "helicopter";
+  pushLog("You buy a helicopter and take to the sky! -400g");
+  renderAll();
+}
+function openMoonShop() {
+  if (!alienQuestComplete) {
+    pushLog("-----Sealed Shop-----");
+    pushLog("The shopkeep eyes you warily: \"Prove yourself against the aliens first. " + alienEncountersWon + "/3 defeated.\"");
+    renderAll();
+    return;
+  }
+  townScreen = "moonshop";
+  pushLog("-----Lunar Armory-----");
+  pushLog("Lunar Plate for sale.");
+  renderAll();
+}
+function buyMoonArmor() {
+  var price = 200;
+  if (sharedGold < price) { pushLog("Not enough gold"); renderAll(); return; }
+  sharedGold -= price;
+  party[0].armorBonus = Math.max(party[0].armorBonus, MOON_ARMOR.defBonus);
+  pushLog(party[0].name + " equips " + MOON_ARMOR.name + "!");
+  renderAll();
+}
+function openTavern() {
+  townScreen = "tavern";
+  if (!tavernRecruit) tavernRecruit = generateRecruit();
+  pushLog("-----Tavern-----");
+  pushLog(tavernRecruit.name + " the " + tavernRecruit.race + " " + tavernRecruit.clsLabel + " seeks a party.");
+  renderAll();
+}
+function openFountain() {
+  townScreen = "fountain";
+  pushLog("-----Fountain-----");
+  pushLog("Drink freely. Party HP restored.");
+  renderAll();
+}
+function openHealer() {
+  townScreen = "healer";
+  pushLog("-----Healer-----");
+  pushLog("Revives cost gold, doubling each time.");
+  renderAll();
+}
+function openHutGift() {
+  townScreen = "hutGift";
+  pushLog("-----A Kindly Stranger-----");
+  pushLog("\"Times are hard. A gift, and I'll tend your wounds.\"");
+  renderAll();
+}
+function giveHutGift(kind, itemOrIdx) {
+  var gaveSomething = false;
+  if (kind === "gold" && sharedGold > 0) {
+    var amt = Math.min(sharedGold, 20);
+    sharedGold -= amt;
+    pushLog("You give " + amt + " gold.");
+    gaveSomething = true;
+  } else if (kind === "potion" && potionCount > 0) {
+    potionCount -= 1;
+    pushLog("You give a potion.");
+    gaveSomething = true;
+  } else if (kind === "weapon" && party[0].equippedWeapon) {
+    pushLog("You give your " + party[0].equippedWeapon.name + ".");
+    party[0].equippedWeapon = null;
+    party[0].weaponBonus = 0;
+    gaveSomething = true;
+  } else if (kind === "armor" && party[0].armorBonus > 0) {
+    pushLog("You give a piece of armor.");
+    party[0].armorBonus = 0;
+    gaveSomething = true;
+  }
+  if (!gaveSomething) { pushLog("You have nothing like that to give."); renderAll(); return; }
+  var anyHurt = party.some(function (p) { return p.alive && p.hp < p.maxHp; });
+  party.forEach(function (p) { if (p.alive) p.hp = p.maxHp; });
+  pushLog(anyHurt ? "Touched, they tend your wounds. Party healed." : "Touched by the gift, though you're already well.");
+  townScreen = null;
+  renderAll();
+}
+function drinkGardenFountain() {
+  var anyHurt = party.some(function (p) { return p.alive && p.hp < p.maxHp; });
+  party.forEach(function (p) { if (p.alive) p.hp = p.maxHp; });
+  pushLog(anyHurt ? "The garden fountain's water is cool and restorative. Party healed." : "The fountain sparkles. You feel fine already.");
+  renderAll();
+}
+function closeTownScreen() {
+  townScreen = null;
+  renderAll();
+}
+
+function buyItem(category, item, price) {
+  if (sharedGold < price) { pushLog("Not enough gold"); renderAll(); return; }
+  sharedGold -= price;
+  if (category === "potion") {
+    potionCount += 1;
+    pushLog("Bought " + item.name);
+  } else if (category === "weapon") {
+    party[0].weaponBonus = Math.max(party[0].weaponBonus, item.dmgBonus);
+    party[0].equippedWeapon = item; // remember the actual weapon (needed to know if it's ranged)
+    pushLog(party[0].name + " equips " + item.name);
+  } else if (category === "armor") {
+    party[0].armorBonus = Math.max(party[0].armorBonus, item.defBonus);
+    pushLog(party[0].name + " equips " + item.name);
+  }
+  renderAll();
+}
+
+function recruitJoin(retireIdx) {
+  if (!tavernRecruit) return;
+  party[retireIdx] = tavernRecruit;
+  pushLog(tavernRecruit.name + " joins the party!");
+  tavernRecruit = null;
+  townScreen = null;
+  renderAll();
+}
+
+function fountainDrink() {
+  var anyHurt = party.some(function (p) { return p.alive && p.hp < p.maxHp; });
+  party.forEach(function (p) { if (p.alive) p.hp = p.maxHp; });
+  pushLog(anyHurt ? "Refreshing! Party fully healed." : "The water sparkles. You feel fine already.");
+  renderAll();
+}
+
+function healerRevive(idx) {
+  var p = party[idx];
+  if (p.alive) { pushLog(p.name + " is not dead"); renderAll(); return; }
+  if (sharedGold < p.reviveCost) { pushLog("Not enough gold"); renderAll(); return; }
+  sharedGold -= p.reviveCost;
+  p.alive = true;
+  p.hp = p.maxHp;
+  pushLog(p.name + " is revived! -" + p.reviveCost + "g");
+  p.reviveCost *= 2;
+  renderAll();
+}
+
+// ============================================================
+// INPUT
+// ============================================================
+document.getElementById("btnN").onclick = function () { if (awaitingShotDirection) fireRangedWeapon("N"); else if (awaitingCannonDirection) fireCannon("N"); else if (state.mode === "combat") arenaMove(0, -1); else move(0, -1); };
+document.getElementById("btnS").onclick = function () { if (awaitingShotDirection) fireRangedWeapon("S"); else if (awaitingCannonDirection) fireCannon("S"); else if (state.mode === "combat") arenaMove(0, 1); else move(0, 1); };
+document.getElementById("btnE").onclick = function () { if (awaitingShotDirection) fireRangedWeapon("E"); else if (awaitingCannonDirection) fireCannon("E"); else if (state.mode === "combat") arenaMove(1, 0); else move(1, 0); };
+document.getElementById("btnW").onclick = function () { if (awaitingShotDirection) fireRangedWeapon("W"); else if (awaitingCannonDirection) fireCannon("W"); else if (state.mode === "combat") arenaMove(-1, 0); else move(-1, 0); };
+document.getElementById("btnAttack").onclick = function () {
+  if (state.mode === "combat") { combatPlayerAttack(); }
+  else { pushLog("Nothing to attack"); renderAll(); }
+};
+document.getElementById("btnCast").onclick = cmdCast;
+document.getElementById("btnGet").onclick = cmdGet;
+document.getElementById("btnStats").onclick = cmdStats;
+document.getElementById("btnRun").onclick = cmdRun;
+document.getElementById("btnFire").onclick = cmdFire;
+document.getElementById("btnDismount").onclick = cmdDismount;
+document.getElementById("btnTame").onclick = cmdTame;
+document.getElementById("btnShoot").onclick = cmdShoot;
+
+document.addEventListener("keydown", function (e) {
+  if (awaitingShotDirection) {
+    if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") fireRangedWeapon("N");
+    else if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") fireRangedWeapon("S");
+    else if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") fireRangedWeapon("W");
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") fireRangedWeapon("E");
+    return;
+  }
+  if (awaitingCannonDirection) {
+    if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") fireCannon("N");
+    else if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") fireCannon("S");
+    else if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") fireCannon("W");
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") fireCannon("E");
+    return;
+  }
+  if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") { if (state.mode === "combat") arenaMove(0, -1); else move(0, -1); }
+  else if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") { if (state.mode === "combat") arenaMove(0, 1); else move(0, 1); }
+  else if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") { if (state.mode === "combat") arenaMove(-1, 0); else move(-1, 0); }
+  else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") { if (state.mode === "combat") arenaMove(1, 0); else move(1, 0); }
+  else if (e.key === "g" || e.key === "G") cmdGet();
+  else if (e.key === "c" || e.key === "C") cmdCast();
+  else if (e.key === "t" || e.key === "T") cmdStats();
+  else if (e.key === "r" || e.key === "R") cmdRun();
+  else if (e.key === "f" || e.key === "F") cmdFire();
+});
+
+// ============================================================
+// TOWN SCREEN TAP HANDLING — maps a canvas click to logical
+// coordinates and dispatches to the right button region, since
+// the shop/tavern/fountain screens are drawn text, not DOM buttons
+// ============================================================
+canvas.addEventListener("click", function (e) {
+  if (!townScreen && !confirmingRun) return;
+  var rect = canvas.getBoundingClientRect();
+  var scaleX = LW / rect.width;
+  var scaleY = LH / rect.height;
+  var lx = (e.clientX - rect.left) * scaleX;
+  var ly = (e.clientY - rect.top) * scaleY;
+  if (confirmingRun) { handleRunConfirmTap(lx, ly); return; }
+  handleTownTap(lx, ly);
+});
+
+function inRect(lx, ly, r) {
+  return lx >= r.x && lx <= r.x + r.w && ly >= r.y && ly <= r.y + r.h;
+}
+
+function handleRunConfirmTap(lx, ly) {
+  var r = runConfirmRects();
+  if (inRect(lx, ly, r.close) || inRect(lx, ly, r.no)) { confirmRunNo(); return; }
+  if (inRect(lx, ly, r.yes)) { confirmRunYes(); return; }
+}
+
+function handleTownTap(lx, ly) {
+  // close-X, top-right of the popup, same rect used to draw it
+  var xr = closeXRect();
+  if (lx >= xr.x && lx <= xr.x + xr.w && ly >= xr.y && ly <= xr.y + xr.h) { closeTownScreen(); return; }
+
+  if (townScreen === "shop") {
+    var y = 115 + 22; // after gold line
+    for (var i = 0; i < LOOT_TABLE.weapon.length; i++) {
+      if (ly >= y - 12 && ly < y + 6) { buyItem("weapon", LOOT_TABLE.weapon[i], (i + 1) * 25); return; }
+      y += 18;
+    }
+    if (ly >= y - 12 && ly < y + 6) { buyItem("potion", LOOT_TABLE.potion[1], 12); return; }
+  } else if (townScreen === "armory") {
+    var ay = 115 + 22; // after gold line
+    for (var j = 0; j < LOOT_TABLE.armor.length; j++) {
+      if (ly >= ay - 12 && ly < ay + 6) { buyItem("armor", LOOT_TABLE.armor[j], (j + 1) * 30); return; }
+      ay += 18;
+    }
+  } else if (townScreen === "stable") {
+    var sy2 = 115 + 22; // after gold line, the "Horse - 50g" row (only when not already mounted)
+    if (!state.mounted && ly >= sy2 - 12 && ly < sy2 + 6) { buyHorseFromStable(); return; }
+  } else if (townScreen === "moonshop") {
+    var my2 = 115 + 22; // after gold line
+    if (ly >= my2 - 12 && ly < my2 + 6) { buyMoonArmor(); return; }
+  } else if (townScreen === "tavern") {
+    var ry = 115 + 18 + 18 + 18 + 26 + 20; // Name/Race/Class/HP lines + "Retire whom" line
+    for (var k = 0; k < party.length; k++) {
+      if (ly >= ry - 12 && ly < ry + 6) { recruitJoin(k); return; }
+      ry += 18;
+    }
+  } else if (townScreen === "fountain") {
+    var fy = 115 + 22; // "water is free" line, then the drink prompt
+    if (ly >= fy - 12 && ly < fy + 6) { fountainDrink(); return; }
+  } else if (townScreen === "healer" || townScreen === "church") {
+    var hy = 115 + 22; // quote line, then revive rows (only for dead members)
+    for (var m = 0; m < party.length; m++) {
+      if (!party[m].alive) {
+        if (ly >= hy - 12 && ly < hy + 6) { healerRevive(m); return; }
+        hy += 18;
+      }
+    }
+  } else if (townScreen === "hutGift") {
+    var gy2 = 115 + 20; // "Give a gift" line, then Gold, Potion, [Weapon], [Armor]
+    if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("gold"); return; }
+    gy2 += 18;
+    if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("potion"); return; }
+    gy2 += 18;
+    if (party[0].equippedWeapon) {
+      if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("weapon"); return; }
+      gy2 += 18;
+    }
+    if (party[0].armorBonus > 0) {
+      if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("armor"); return; }
+    }
+  }
+}
+
+window.addEventListener("resize", renderAll);
+
+requestAnimationFrame(function () { renderAll(); });
+
+})();
+</script>
+
+</body>
+</html>
