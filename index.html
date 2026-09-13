@@ -421,8 +421,9 @@ function buildTown() {
   carveRoom(g, 33, 18, 8, 6, "W", 3);
 
   // Tavern — southwest, well clear of the weaponsmith
+  // (the tavern keeper wanders the room; not a fixed tile — see
+  // setupRoamingEntities, kind "tavern")
   carveRoom(g, 3, 29, 9, 7, "N", 4);
-  g[35][7] = T.TAVERN;
 
   // Healer / hospital — southeast, mirrors the tavern
   carveRoom(g, 32, 29, 9, 7, "N", 4);
@@ -587,8 +588,8 @@ function buildIslandTown() {
   carveRoom(g, 14, 7, 6, 4, "W", 2);
 
   // Tavern — south-west, close to the gate
+  // (the tavern keeper wanders the room; not a fixed tile)
   carveRoom(g, 2, 10, 7, 6, "E", 3);
-  g[13][5] = T.TAVERN;
 
   // Healer's hut — small, standalone near the middle-south
   carveRoom(g, 10, 12, 5, 4, "N", 2);
@@ -950,6 +951,8 @@ function setupRoamingEntities() {
   registerRoamingNpc(roamingNpcs, 6, 20, "town", { x0: 4, y0: 19, x1: 9, y1: 22 }, "shop");
   // mainland armory room: x0=33,y0=18,w=8,h=6 -> interior x:34-39,y:19-22
   registerRoamingNpc(roamingNpcs, 36, 20, "town", { x0: 34, y0: 19, x1: 39, y1: 22 }, "armory");
+  // mainland tavern room: x0=3,y0=29,w=9,h=7 -> interior x:4-10,y:30-34
+  registerRoamingNpc(roamingNpcs, 7, 32, "town", { x0: 4, y0: 30, x1: 10, y1: 34 }, "tavern");
   // mainland stable room: x0=18,y0=30,w=8,h=6 -> interior x:19-24,y:31-34
   stableHorses.push({ x: 20, y: 32, screen: "town", bounds: { x0: 19, y0: 31, x1: 24, y1: 34 } });
   stableHorses.push({ x: 23, y: 33, screen: "town", bounds: { x0: 19, y0: 31, x1: 24, y1: 34 } });
@@ -958,6 +961,8 @@ function setupRoamingEntities() {
   registerRoamingNpc(roamingNpcs, 16, 3, "islandTown", { x0: 15, y0: 3, x1: 18, y1: 4 }, "shop");
   // island armory room: x0=14,y0=7,w=6,h=4 -> interior x:15-18,y:8-9
   registerRoamingNpc(roamingNpcs, 17, 8, "islandTown", { x0: 15, y0: 8, x1: 18, y1: 9 }, "armory");
+  // island tavern room: x0=2,y0=10,w=7,h=6 -> interior x:3-7,y:11-14
+  registerRoamingNpc(roamingNpcs, 5, 13, "islandTown", { x0: 3, y0: 11, x1: 7, y1: 14 }, "tavern");
 }
 setupRoamingEntities();
 function trySpawnWildHorse() {
@@ -1964,7 +1969,10 @@ function renderMap() {
 
       var roamingNpcHere = roamingNpcs.find(function (e) { return e.screen === state.mode && e.x === gx && e.y === gy; });
       if (roamingNpcHere) {
-        drawHuman(sx + TILE / 2, sy + TILE / 2, TILE, roamingNpcHere.kind === "armory" ? PAL.gray : "#ff8833", "S");
+        var roamingNpcColor = roamingNpcHere.kind === "armory" ? PAL.gray
+          : roamingNpcHere.kind === "tavern" ? PAL.gold
+          : "#ff8833";
+        drawHuman(sx + TILE / 2, sy + TILE / 2, TILE, roamingNpcColor, "S");
       }
       var stableHorseHere = stableHorses.find(function (e) { return e.screen === state.mode && e.x === gx && e.y === gy; });
       if (stableHorseHere) {
@@ -3418,6 +3426,10 @@ function move(dx, dy) {
   } else if (state.mode === "town" || state.mode === "islandTown") {
     tryGuardTrouble();
     stepAllRoamingEntities();
+    // the tavern keeper talks to you as soon as you're next to (or bump
+    // into) them — no need to press GET, unlike the other shopkeepers
+    var tavernNpc = roamingNpcAdjacent();
+    if (tavernNpc && tavernNpc.kind === "tavern") { openTavern(); return; }
   }
   renderAll();
 }
@@ -3441,6 +3453,7 @@ function cmdGet() {
   // them" and opens their shop, since they're no longer a fixed tile to
   // walk onto directly
   var npc = roamingNpcAdjacent();
+  if (npc && npc.kind === "tavern") { openTavern(); return; }
   if (npc) { openShop(npc.kind === "armory" ? "armor" : "weapon"); return; }
   var here = groundItemAt(state.mode, state.x, state.y);
   if (!here) { pushLog("Nothing to get"); renderAll(); return; }
