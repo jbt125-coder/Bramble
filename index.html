@@ -1436,12 +1436,16 @@ function drawMapBorder() {
 function modeLabel() {
   if (state.mode === "town") return "TOWN OF BRAMBLE";
   if (state.mode === "dungeon") return "DUNGEON DEPTHS";
-  if (state.mode === "island") return "UNCHARTED ISLE";
   if (state.mode === "islandTown") return "PORT REVERIE";
   if (state.mode === "moon") return "GREY MOON";
   if (state.mode === "moonTown") return "LUNA STATION";
   if (state.mode === "combat") return "COMBAT";
-  return "SOUTH WIND";
+  // while actually sailing, show the live wind reading instead of the
+  // place name — this is the only spot the wind system is visible outside
+  // the log, so it should reflect `wind.dir`, not a static place name
+  if (state.sailing) return wind.dir === "CALM" ? "DEAD CALM" : facingWord(wind.dir).toUpperCase() + " WIND";
+  if (state.mode === "island") return "UNCHARTED ISLE";
+  return "SOUTHWIND COAST";
 }
 
 // ============================================================
