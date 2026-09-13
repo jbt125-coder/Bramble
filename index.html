@@ -817,10 +817,10 @@ function rollLootForMonster(monsterTier) {
 // PARTY / GAME STATE
 // ============================================================
 var party = [
-  { name: "Kestrel", cls: "FTR", mana: 0,  lvl: 1, xp: 0, hp: 32, maxHp: 32, food: 73, color: "#3aa0ff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
-  { name: "Elowen",  cls: "CLR", mana: 14, lvl: 1, xp: 0, hp: 22, maxHp: 22, food: 73, color: "#ffffff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
-  { name: "Rasmus",  cls: "WIZ", mana: 18, lvl: 1, xp: 0, hp: 16, maxHp: 16, food: 73, color: "#ff8833", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
-  { name: "Finn",    cls: "THF", mana: 0,  lvl: 1, xp: 0, hp: 20, maxHp: 20, food: 73, color: "#33cc33", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 }
+  { name: "Kestrel", cls: "FTR", clsLabel: "Fighter", race: "Human",    mana: 0,  lvl: 1, xp: 0, hp: 32, maxHp: 32, food: 73, color: "#3aa0ff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
+  { name: "Elowen",  cls: "CLR", clsLabel: "Cleric",  race: "Elf",      mana: 14, lvl: 1, xp: 0, hp: 22, maxHp: 22, food: 73, color: "#ffffff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
+  { name: "Rasmus",  cls: "WIZ", clsLabel: "Wizard",  race: "Gnome",    mana: 18, lvl: 1, xp: 0, hp: 16, maxHp: 16, food: 73, color: "#ff8833", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
+  { name: "Finn",    cls: "THF", clsLabel: "Thief",   race: "Halfling", mana: 0,  lvl: 1, xp: 0, hp: 20, maxHp: 20, food: 73, color: "#33cc33", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 }
 ];
 var sharedGold = 120;
 var potionCount = 2;
@@ -2060,18 +2060,28 @@ function drawPartyMini(x, y, w, h, p) {
   ctx.fillText(line2, x + 6, y + 42);
 }
 
+// hit-testable rect for each party slot's mini card — shared by the
+// renderers below and the click handler that opens the character sheet
+function partyMiniRect(idx) {
+  var half = LW / 2;
+  if (idx === 0) return { x: 2, y: 2, w: half - 4, h: TOPBAR_H - 4 };
+  if (idx === 1) return { x: half + 2, y: 2, w: half - 4, h: TOPBAR_H - 4 };
+  if (idx === 2) return { x: 2, y: BOTBAR_Y0, w: half - 4, h: BOTBAR_H - 2 };
+  return { x: half + 2, y: BOTBAR_Y0, w: half - 4, h: BOTBAR_H - 2 };
+}
+
 function renderTopBar() {
   px(0, 0, LW, TOPBAR_H, PAL.black);
-  var half = LW / 2;
-  drawPartyMini(2, 2, half - 4, TOPBAR_H - 4, party[0]);
-  drawPartyMini(half + 2, 2, half - 4, TOPBAR_H - 4, party[1]);
+  var r0 = partyMiniRect(0), r1 = partyMiniRect(1);
+  drawPartyMini(r0.x, r0.y, r0.w, r0.h, party[0]);
+  drawPartyMini(r1.x, r1.y, r1.w, r1.h, party[1]);
 }
 
 function renderBottomBar() {
   px(0, BOTBAR_Y0, LW, BOTBAR_H, PAL.black);
-  var half = LW / 2;
-  drawPartyMini(2, BOTBAR_Y0, half - 4, BOTBAR_H - 2, party[2]);
-  drawPartyMini(half + 2, BOTBAR_Y0, half - 4, BOTBAR_H - 2, party[3]);
+  var r2 = partyMiniRect(2), r3 = partyMiniRect(3);
+  drawPartyMini(r2.x, r2.y, r2.w, r2.h, party[2]);
+  drawPartyMini(r3.x, r3.y, r3.w, r3.h, party[3]);
 }
 
 // ============================================================
@@ -2153,6 +2163,7 @@ function renderAll() {
     renderLogArea();
   }
   if (townScreen) renderTownScreenOverlay();
+  if (characterSheetIndex !== null) renderCharacterSheetOverlay();
 
   // FIRE button only makes sense while actually sailing, out on the map
   // (not in combat, not in a town popup)
@@ -2377,6 +2388,65 @@ function renderTownScreenOverlay() {
       ctx.fillText("Your armor  [tap A]", 36, y); y += 18;
     }
   }
+}
+
+// ============================================================
+// CHARACTER SHEET — opened by tapping a party member's mini card in
+// the top/bottom bars; shows race/class, core stats, equipment, and
+// known spells for that one character.
+// ============================================================
+function renderCharacterSheetOverlay() {
+  var p = party[characterSheetIndex];
+  if (!p) { characterSheetIndex = null; return; }
+
+  px(20, 60, LW - 40, LH - 200, "#0a0a0a");
+  ctx.strokeStyle = PAL.purple;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(21, 61, LW - 42, LH - 202);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = p.alive ? PAL.white : PAL.red;
+  ctx.font = "bold 16px 'Courier New', monospace";
+  ctx.fillText(p.name + (p.alive ? "" : " (fallen)"), LW / 2, 90);
+  ctx.textAlign = "left";
+  ctx.font = "12px 'Courier New', monospace";
+
+  drawCloseX();
+
+  var y = 115;
+  ctx.fillStyle = PAL.gray;
+  var subtitle = (p.race || "Unknown") + " " + (p.clsLabel || classLabel(p.cls));
+  if (p.title) subtitle += " \"" + p.title + "\"";
+  ctx.fillText(subtitle, 36, y); y += 24;
+
+  ctx.fillStyle = PAL.white;
+  ctx.fillText("Level " + p.lvl + "   XP " + p.xp, 36, y); y += 18;
+  ctx.fillText("HP " + Math.max(0, p.hp) + "/" + p.maxHp + "   Mana " + p.mana, 36, y); y += 18;
+  ctx.fillText("Food " + p.food, 36, y); y += 26;
+
+  ctx.fillStyle = PAL.yellow;
+  ctx.fillText("Equipment", 36, y); y += 18;
+  ctx.fillStyle = PAL.white;
+  ctx.fillText("Weapon: " + (p.equippedWeapon ? p.equippedWeapon.name + " (+" + p.equippedWeapon.dmgBonus + " dmg)" : "None"), 36, y); y += 18;
+  ctx.fillText("Armor: " + (p.armorBonus > 0 ? "+" + p.armorBonus + " def" : "None"), 36, y); y += 26;
+
+  ctx.fillStyle = PAL.yellow;
+  ctx.fillText("Spells", 36, y); y += 18;
+  var spells = SPELLS[p.cls] || [];
+  if (spells.length === 0) {
+    ctx.fillStyle = PAL.gray;
+    ctx.fillText("No spells known", 36, y); y += 18;
+  } else {
+    ctx.fillStyle = PAL.white;
+    spells.forEach(function (s) {
+      ctx.fillText(s.name + " (" + s.cost + " mana)", 36, y); y += 18;
+    });
+  }
+}
+
+function handleCharacterSheetTap(lx, ly) {
+  var xr = closeXRect();
+  if (inRect(lx, ly, xr)) { characterSheetIndex = null; renderAll(); }
 }
 
 // Close-X box, drawn top-right of the popup card; tap region matches
@@ -3533,6 +3603,7 @@ function confirmRunNo() {
 // TOWN SERVICES — shop, tavern (recruit/retire), fountain (heal/revive)
 // ============================================================
 var townScreen = null; // null | "shop" | "tavern" | "fountain"
+var characterSheetIndex = null; // null | index into party[] — set to open the character sheet overlay
 var tavernRecruit = null;
 
 var RACES = ["Human", "Elf", "Dwarf", "Halfling", "Gnome"];
@@ -3544,6 +3615,20 @@ var CLASSES = [
   { code: "BRB", label: "Barbarian" },
   { code: "RNG", label: "Ranger" }
 ];
+function classLabel(code) {
+  for (var i = 0; i < CLASSES.length; i++) if (CLASSES[i].code === code) return CLASSES[i].label;
+  return code;
+}
+
+// spells known per class — flavor + the mana cost of each cast action
+var SPELLS = {
+  FTR: [],
+  CLR: [{ name: "Bless", cost: 4 }, { name: "Mend Wounds", cost: 6 }],
+  WIZ: [{ name: "Missile", cost: 3 }, { name: "Light", cost: 3 }],
+  THF: [],
+  BRB: [],
+  RNG: [{ name: "Hunter's Mark", cost: 5 }]
+};
 var NAME_POOL = ["Alaric", "Brynn", "Corwin", "Dara", "Edric", "Fenna", "Garrick", "Hale", "Isolde", "Jorah"];
 
 function generateRecruit() {
@@ -3800,14 +3885,20 @@ document.addEventListener("keydown", function (e) {
 // the shop/tavern/fountain screens are drawn text, not DOM buttons
 // ============================================================
 canvas.addEventListener("click", function (e) {
-  if (!townScreen && !confirmingRun) return;
   var rect = canvas.getBoundingClientRect();
   var scaleX = LW / rect.width;
   var scaleY = LH / rect.height;
   var lx = (e.clientX - rect.left) * scaleX;
   var ly = (e.clientY - rect.top) * scaleY;
+
   if (confirmingRun) { handleRunConfirmTap(lx, ly); return; }
-  handleTownTap(lx, ly);
+  if (characterSheetIndex !== null) { handleCharacterSheetTap(lx, ly); return; }
+  if (townScreen) { handleTownTap(lx, ly); return; }
+
+  // nothing open — tapping a party member's mini card opens their character sheet
+  for (var i = 0; i < party.length; i++) {
+    if (inRect(lx, ly, partyMiniRect(i))) { characterSheetIndex = i; renderAll(); return; }
+  }
 });
 
 function inRect(lx, ly, r) {
