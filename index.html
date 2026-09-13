@@ -817,11 +817,12 @@ function rollLootForMonster(monsterTier) {
 // PARTY / GAME STATE
 // ============================================================
 var party = [
-  { name: "Kestrel", cls: "FTR", clsLabel: "Fighter", race: "Human",    mana: 0,  lvl: 1, xp: 0, hp: 32, maxHp: 32, food: 73, color: "#3aa0ff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
-  { name: "Elowen",  cls: "CLR", clsLabel: "Cleric",  race: "Elf",      mana: 14, lvl: 1, xp: 0, hp: 22, maxHp: 22, food: 73, color: "#ffffff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
-  { name: "Rasmus",  cls: "WIZ", clsLabel: "Wizard",  race: "Gnome",    mana: 18, lvl: 1, xp: 0, hp: 16, maxHp: 16, food: 73, color: "#ff8833", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
-  { name: "Finn",    cls: "THF", clsLabel: "Thief",   race: "Halfling", mana: 0,  lvl: 1, xp: 0, hp: 20, maxHp: 20, food: 73, color: "#33cc33", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 }
+  { name: "Kestrel", cls: "FTR", clsLabel: "Fighter", race: "Human",    gender: "m", mana: 0,  lvl: 1, xp: 0, hp: 32, maxHp: 32, food: 73, color: "#3aa0ff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
+  { name: "Elowen",  cls: "CLR", clsLabel: "Cleric",  race: "Elf",      gender: "f", mana: 14, lvl: 1, xp: 0, hp: 22, maxHp: 22, food: 73, color: "#ffffff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
+  { name: "Rasmus",  cls: "WIZ", clsLabel: "Wizard",  race: "Gnome",    gender: "m", mana: 18, lvl: 1, xp: 0, hp: 16, maxHp: 16, food: 73, color: "#ff8833", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 },
+  { name: "Finn",    cls: "THF", clsLabel: "Thief",   race: "Halfling", gender: "m", mana: 0,  lvl: 1, xp: 0, hp: 20, maxHp: 20, food: 73, color: "#33cc33", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0 }
 ];
+party.forEach(function (p) { p.clsEmoji = pickClassEmoji(p.cls, p.gender); });
 var sharedGold = 120;
 var potionCount = 2;
 
@@ -2407,7 +2408,7 @@ function renderCharacterSheetOverlay() {
   ctx.textAlign = "center";
   ctx.fillStyle = p.alive ? PAL.white : PAL.red;
   ctx.font = "bold 16px 'Courier New', monospace";
-  ctx.fillText(p.name + (p.alive ? "" : " (fallen)"), LW / 2, 90);
+  ctx.fillText((p.clsEmoji ? p.clsEmoji + " " : "") + p.name + (p.alive ? "" : " (fallen)"), LW / 2, 90);
   ctx.textAlign = "left";
   ctx.font = "12px 'Courier New', monospace";
 
@@ -3629,16 +3630,40 @@ var SPELLS = {
   BRB: [],
   RNG: [{ name: "Hunter's Mark", cost: 5 }]
 };
+
+// class icon shown on the character sheet, gender-matched; Cleric splits
+// between a devotional (turban) and a meditative (lotus) look at random,
+// picked once per character rather than re-rolled on every render
+function pickClassEmoji(cls, gender) {
+  var isFemale = gender === "f";
+  if (cls === "CLR") {
+    return Math.random() < 0.5
+      ? (isFemale ? "👳‍♀️" : "👳‍♂️")
+      : (isFemale ? "🧘‍♀️" : "🧘‍♂️");
+  }
+  var table = {
+    FTR: { m: "🤼‍♂️", f: "🤼‍♀️" },
+    WIZ: { m: "🧙‍♂️", f: "🧙‍♀️" },
+    THF: { m: "🥷", f: "🥷" },
+    BRB: { m: "🏋️‍♂️", f: "🏋️‍♀️" },
+    RNG: { m: "🦸‍♂️", f: "🦸‍♀️" }
+  };
+  var entry = table[cls];
+  return entry ? (isFemale ? entry.f : entry.m) : "";
+}
+
 var NAME_POOL = ["Alaric", "Brynn", "Corwin", "Dara", "Edric", "Fenna", "Garrick", "Hale", "Isolde", "Jorah"];
 
 function generateRecruit() {
   var cls = CLASSES[Math.floor(Math.random() * CLASSES.length)];
   var race = RACES[Math.floor(Math.random() * RACES.length)];
   var name = NAME_POOL[Math.floor(Math.random() * NAME_POOL.length)];
+  var gender = Math.random() < 0.5 ? "m" : "f";
   var isCaster = cls.code === "CLR" || cls.code === "WIZ";
   var maxHp = 14 + Math.floor(Math.random() * 14);
   return {
-    name: name, cls: cls.code, clsLabel: cls.label, race: race,
+    name: name, cls: cls.code, clsLabel: cls.label, race: race, gender: gender,
+    clsEmoji: pickClassEmoji(cls.code, gender),
     mana: isCaster ? 10 + Math.floor(Math.random() * 10) : 0,
     lvl: 1, xp: 0, hp: maxHp, maxHp: maxHp, food: 73,
     color: "#cc88ff", alive: true, reviveCost: 20, weaponBonus: 0, armorBonus: 0
