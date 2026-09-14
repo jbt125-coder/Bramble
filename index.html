@@ -159,7 +159,8 @@ var T = {
   TAVERN: 13, FOUNTAIN: 14, HEALER: 15, HORSE: 16, SHIP: 17, ISLAND: 18, ARMORY: 19, KING: 20,
   STABLE: 21, PORTAL: 22, MOON_GRASS: 23, MOON_SHOP: 24, MOON_PORTAL: 25, ROCKET: 26,
   HUT: 27, MOAI: 28, SHRINE: 29, CHURCH: 30, GARDEN_FOUNTAIN: 31, VOLCANO: 32, ASIA_CASTLE: 33,
-  GRAVE: 34, BRIDGE: 35, BED: 36, MOURNER: 37, HUT_NPC: 38
+  GRAVE: 34, BRIDGE: 35, BED: 36, MOURNER: 37, HUT_NPC: 38,
+  STAIRS_DOWN: 39, STAIRS_UP: 40, BOSS: 41
 };
 
 function mkMap(w, h, fill) {
@@ -481,14 +482,45 @@ function buildTown() {
   return g;
 }
 
-function buildDungeon() {
-  var w = 22, h = 16;
+// ---------- the mainland dungeon: 8 randomly-generated levels ----------
+// Each level is a chain of random rooms connected by L-shaped corridors
+// (guaranteed connected, since every room links straight to the last).
+// Level 1 has the door out (back to the overworld) plus a stairway down.
+// Levels 2-7 have a stairway up (back) and a stairway down (onward).
+// Level 8 has only a stairway up — its far room holds the Archwizard
+// boss instead of a stairway down, since there's nowhere further to go.
+function buildDungeonLevel(levelNum) {
+  var w = 24, h = 18;
   var g = mkMap(w, h, T.WALL);
-  for (var r = 1; r < h - 1; r++) for (var c = 1; c < 9; c++) g[r][c] = T.FLOOR;
-  for (var c2 = 9; c2 < w - 1; c2++) g[7][c2] = T.FLOOR;
-  for (var r2 = 1; r2 < h - 1; r2++) for (var c3 = 13; c3 < w - 1; c3++) g[r2][c3] = T.FLOOR;
-  g[1][1] = T.DOOR;
+  var roomCount = 5 + Math.floor(Math.random() * 3); // 5-7 rooms
+  var rooms = [];
+  for (var i = 0; i < roomCount; i++) {
+    var rw = 4 + Math.floor(Math.random() * 4); // 4-7 wide
+    var rh = 4 + Math.floor(Math.random() * 4); // 4-7 tall
+    var rx = 1 + Math.floor(Math.random() * (w - rw - 2));
+    var ry = 1 + Math.floor(Math.random() * (h - rh - 2));
+    for (var r = ry; r < ry + rh; r++) for (var c = rx; c < rx + rw; c++) g[r][c] = T.FLOOR;
+    rooms.push({ x: rx + Math.floor(rw / 2), y: ry + Math.floor(rh / 2) });
+  }
+  for (var j = 1; j < rooms.length; j++) {
+    var a = rooms[j - 1], b = rooms[j];
+    var cx = a.x, cy = a.y;
+    while (cx !== b.x) { g[cy][cx] = T.FLOOR; cx += cx < b.x ? 1 : -1; }
+    while (cy !== b.y) { g[cy][cx] = T.FLOOR; cy += cy < b.y ? 1 : -1; }
+    g[cy][cx] = T.FLOOR;
+  }
+  var first = rooms[0], last = rooms[rooms.length - 1];
+  g[first.y][first.x] = levelNum === 1 ? T.DOOR : T.STAIRS_UP;
+  g[last.y][last.x] = levelNum === 8 ? T.BOSS : T.STAIRS_DOWN;
   return g;
+}
+
+// Levels are generated once on first visit and cached, so leaving and
+// coming back doesn't reshuffle a level you've already explored.
+var dungeonLevels = {};
+function ensureDungeonLevel(n) {
+  if (!dungeonLevels[n]) dungeonLevels[n] = buildDungeonLevel(n);
+  return dungeonLevels[n];
 }
 
 // ---------- the special island, only reachable by ship ----------
@@ -619,7 +651,6 @@ function buildIslandTown() {
 
 var overworldGrid = buildOverworld();
 var townGrid = buildTown();
-var dungeonGrid = buildDungeon();
 var islandGrid = buildIslandOverworld();
 var islandTownGrid = buildIslandTown();
 placeIslandEntry();
@@ -719,6 +750,12 @@ var ALIEN_DEF = { name: "Alien", hp: 15, dmg: [2, 7], gold: [8, 18], xp: 11 };
 var MOON_ARMOR = { name: "Lunar Plate", defBonus: 6 };
 var QUEST_REWARD_ITEM = { name: "Starforged Blade", dmgBonus: 12 };
 
+// ---------- Bramble King's wizard quest: defeat the Archwizard on
+// dungeon level 8 and bring his wand back for a 500g reward ----------
+var hasWizardsWand = false;
+var wizardQuestComplete = false;
+var WIZARDS_WAND = { name: "Archwizard's Wand", dmgBonus: 10, emoji: "🪄" };
+
 // Places the ISLAND marker at a random open-water tile on the main
 // overworld, far enough from the mainland's coastline to feel like a real
 // voyage. Falls back to any water tile if a far one can't be found.
@@ -760,15 +797,21 @@ function farFromLand(r, c, radius) {
 // ---------- ground items: chests + monster drops, keyed by screen ----------
 // Each entry: { screen: "overworld"|"town"|"dungeon", x, y, kind: "gold"|"item", amount, item }
 var groundItems = [];
+// Ground items in the dungeon also need a level, since all 8 levels
+// otherwise share the same "dungeon" screen key and would collide —
+// stamped from the current dungeon level unless the caller already set one.
 function addGroundItem(screenKey, x, y, entry) {
   entry.screen = screenKey;
   entry.x = x; entry.y = y;
+  if (screenKey === "dungeon" && entry.level === undefined) entry.level = state.dungeonLevel;
   groundItems.push(entry);
 }
 function groundItemAt(screenKey, x, y) {
   for (var i = 0; i < groundItems.length; i++) {
     var g = groundItems[i];
-    if (g.screen === screenKey && g.x === x && g.y === y) return g;
+    if (g.screen !== screenKey || g.x !== x || g.y !== y) continue;
+    if (screenKey === "dungeon" && g.level !== state.dungeonLevel) continue;
+    return g;
   }
   return null;
 }
@@ -779,7 +822,8 @@ function removeGroundItem(entry) {
 // seed the map chests as ground items instead of a permanent tile type,
 // so they can disappear once looted
 addGroundItem("town", 10, 8, { kind: "gold", amount: null }); // amount rolled on pickup
-addGroundItem("dungeon", 18, 13, { kind: "gold", amount: null });
+// (the dungeon no longer has one fixed chest — it's now 8 randomly
+// generated levels, so there's no single coordinate that's always floor)
 
 // ---------- loot tables, tiered by monster strength ----------
 var LOOT_TABLE = {
@@ -843,7 +887,8 @@ var state = {
   mounted: false,      // riding ANY land vehicle (horse/car/helicopter)
   vehicleType: null,   // null | "horse" | "car" | "helicopter" — which one specifically
   sailing: false,      // currently aboard the ship (only true while ON the ship's tile, moving over water)
-  flying: false        // aboard the rocket, en route to/from the moon
+  flying: false,       // aboard the rocket, en route to/from the moon
+  dungeonLevel: 1      // 1-8, only meaningful while mode === "dungeon"
 };
 
 // The ship itself: once won, it's a real object with a position on whatever
@@ -1076,7 +1121,15 @@ function spawnMapMonster(screenKey) {
   }
   var mx = state.x + (Math.random() < 0.5 ? -1 : 1) * (2 + Math.floor(Math.random() * 2));
   var my = state.y + (Math.random() < 0.5 ? -1 : 1) * (2 + Math.floor(Math.random() * 2));
-  mapMonsters.push({ name: def.name, x: mx, y: my, screen: screenKey, aquatic: !!def.aquatic });
+  var level = screenKey === "dungeon" ? state.dungeonLevel : undefined;
+  mapMonsters.push({ name: def.name, x: mx, y: my, screen: screenKey, level: level, aquatic: !!def.aquatic });
+}
+
+// True if a wandering-monster entity (or ground item) tagged with
+// `.screen`/`.level` is actually here right now — the dungeon's 8 levels
+// all share the "dungeon" screen key, so they need the level compared too.
+function entityIsHere(e) {
+  return e.screen === state.mode && (state.mode !== "dungeon" || e.level === state.dungeonLevel);
 }
 
 // Moves each wandering monster one step toward the player. If a monster
@@ -1096,7 +1149,7 @@ function stepMapMonsters() {
   var stillAlive = [];
   for (var i = 0; i < mapMonsters.length; i++) {
     var m = mapMonsters[i];
-    if (m.screen !== screenKey) { stillAlive.push(m); continue; }
+    if (!entityIsHere(m)) { stillAlive.push(m); continue; }
     var dx = state.x - m.x, dy = state.y - m.y;
     var stepX = dx === 0 ? 0 : (dx > 0 ? 1 : -1);
     var stepY = dy === 0 ? 0 : (dy > 0 ? 1 : -1);
@@ -1144,6 +1197,9 @@ var MONSTER_DEFS = [
 // Wizards only appear in the dungeon — a ranged caster archetype: lower
 // HP than most, but hits harder since it never has to close to melee.
 var WIZARD_DEF = { name: "Wizard", hp: 7, dmg: [3, 9], gold: [4, 12], xp: 9, ranged: true };
+// The Archwizard is a one-of-a-kind boss guarding dungeon level 8 — far
+// tougher than the common wandering Wizard, never spawns on its own.
+var ARCHWIZARD_DEF = { name: "Archwizard", hp: 55, dmg: [8, 18], gold: [100, 200], xp: 60, ranged: true };
 // Bats are dungeon-only, like Wizards.
 var BAT_DEF = { name: "Bat", hp: 6, dmg: [1, 4], gold: [1, 4], xp: 4 };
 // Giant Wasp, Giant Eagle, and Monkey are terrain-gated: they only spawn
@@ -1269,7 +1325,7 @@ function makeMonsterInstance(def, x, y) {
 
 function currentGrid() {
   if (state.mode === "town") return townGrid;
-  if (state.mode === "dungeon") return dungeonGrid;
+  if (state.mode === "dungeon") return ensureDungeonLevel(state.dungeonLevel);
   if (state.mode === "island") return islandGrid;
   if (state.mode === "islandTown") return islandTownGrid;
   if (state.mode === "moon") return moonGrid;
@@ -1583,6 +1639,18 @@ function drawTile(sx, sy, size, type, gx, gy) {
     ctx.fillStyle = "#8a5a33";
     px(sx + size * 0.6, sy + size * 0.35, size * 0.3, size * 0.2, "#8a5a33");
     px(sx + size * 0.78, sy + size * 0.25, size * 0.14, size * 0.18, "#8a5a33");
+  } else if (type === T.STAIRS_DOWN || type === T.STAIRS_UP) {
+    px(sx, sy, size, size, "#141414");
+    for (var sti = 0; sti < 4; sti++) {
+      px(sx + size * 0.15, sy + size * (0.15 + sti * 0.18), size * 0.7, size * 0.12, sti % 2 === 0 ? "#666666" : "#444444");
+    }
+    drawChevron(sx + size / 2, sy + size * (type === T.STAIRS_DOWN ? 0.86 : 0.14), type === T.STAIRS_DOWN ? "down" : "up", size * 0.12, PAL.yellow);
+  } else if (type === T.BOSS) {
+    px(sx, sy, size, size, "#1a0a1a");
+    drawHuman(sx + size / 2, sy + size / 2, size, "#cc33cc", "S");
+    ctx.strokeStyle = "#ff66ff";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(sx + size / 2, sy + size / 2, size * 0.42, 0, Math.PI * 2); ctx.stroke();
   } else if (type === T.PORTAL || type === T.MOON_PORTAL) {
     px(sx, sy, size, size, type === T.MOON_PORTAL ? "#2a2a3a" : PAL.black);
     var cx3 = sx + size / 2, cy3 = sy + size / 2;
@@ -2000,7 +2068,7 @@ function renderMap() {
   // that's already fully painted instead of being clipped by it.
   for (var mi = 0; mi < mapMonsters.length; mi++) {
     var mm = mapMonsters[mi];
-    if (mm.screen !== state.mode) continue;
+    if (!entityIsHere(mm)) continue;
     var mvx = mm.x - (state.x - half), mvy = mm.y - (state.y - half);
     if (mvx < 0 || mvx >= VIEW_TILES || mvy < 0 || mvy >= VIEW_TILES) continue;
     var msx = MAP_INNER_X0 + mvx * TILE, msy = MAP_INNER_Y0 + mvy * TILE;
@@ -2338,10 +2406,25 @@ function renderTownScreenOverlay() {
     });
   } else if (townScreen === "king") {
     ctx.fillStyle = PAL.white;
-    ctx.fillText("\"Welcome, traveler.\"", 36, y); y += 20;
-    ctx.fillText("\"I have no task for thee at present.\"", 36, y); y += 20;
-    ctx.fillStyle = PAL.gray;
-    ctx.fillText("(quests coming soon)", 36, y); y += 18;
+    if (state.mode === "islandTown") {
+      ctx.fillText("\"Welcome, traveler.\"", 36, y); y += 20;
+      ctx.fillText("\"I have no task for thee at present.\"", 36, y); y += 20;
+    } else if (wizardQuestComplete) {
+      ctx.fillText("\"Well met, hero.\"", 36, y); y += 20;
+      ctx.fillText("\"The realm still remembers your deed.\"", 36, y); y += 20;
+    } else {
+      ctx.fillText("\"An Archwizard has fouled our", 36, y); y += 18;
+      ctx.fillText("dungeon's deepest hall.\"", 36, y); y += 20;
+      ctx.fillText("\"Slay him, bring his wand,", 36, y); y += 18;
+      ctx.fillText("and 500 gold is yours.\"", 36, y); y += 22;
+      if (hasWizardsWand) {
+        ctx.fillStyle = PAL.gold;
+        ctx.fillText("You have the wand!  [tap T]", 36, y); y += 18;
+      } else {
+        ctx.fillStyle = PAL.gray;
+        ctx.fillText("(Dungeon level 8, mainland)", 36, y); y += 18;
+      }
+    }
   } else if (townScreen === "stable") {
     ctx.fillStyle = PAL.gold;
     ctx.fillText("Gold: " + sharedGold, 36, y); y += 22;
@@ -2573,8 +2656,10 @@ function drawCloseX(r) {
 // ============================================================
 function tryEncounter() {
   if (state.mode !== "overworld" && state.mode !== "dungeon" && state.mode !== "island") return;
+  // the Archwizard's floor is quiet — no wandering monsters on level 8
+  if (state.mode === "dungeon" && state.dungeonLevel === 8) return;
   var cap = state.mode === "dungeon" ? 3 : 2;
-  var already = mapMonsters.filter(function (m) { return m.screen === state.mode; }).length;
+  var already = mapMonsters.filter(entityIsHere).length;
   if (already < cap && Math.random() < 0.05) spawnMapMonster(state.mode);
 }
 
@@ -2718,7 +2803,7 @@ function startCombatWithMonster(mapMonster, screenKey) {
 var SPECIAL_MONSTER_DEFS = [
   SEA_SERPENT_DEF, PIRATE_DEF, GUARD_DEF, WILD_HORSE_DEF, WIZARD_DEF,
   BAT_DEF, GIANT_WASP_DEF, GIANT_EAGLE_DEF, MONKEY_DEF, YETI_DEF, KRAKEN_DEF, ALIEN_DEF,
-  PHOENIX_DEF, ELITE_GUARD_DEF
+  PHOENIX_DEF, ELITE_GUARD_DEF, ARCHWIZARD_DEF
 ];
 function findMonsterDef(name) {
   for (var i = 0; i < MONSTER_DEFS.length; i++) {
@@ -2800,6 +2885,17 @@ function endCombatVictory() {
     party[0].equippedWeapon = FIRE_BOW;
     pushLog("The Phoenix's ashes reveal a Fire Bow!");
     pushLog(party[0].name + " equips the Fire Bow!");
+  }
+  if (combat.kind === "wizardBoss") {
+    hasWizardsWand = true;
+    addToInventory("weapon", WIZARDS_WAND);
+    // clear the boss tile on level 8 so he can't be re-fought
+    var level8 = ensureDungeonLevel(8);
+    var bossSpot = findTileOnGrid(level8, T.BOSS);
+    if (bossSpot) level8[bossSpot.y][bossSpot.x] = T.FLOOR;
+    pushLog("-----The Archwizard falls!-----");
+    pushLog("You claim the " + WIZARDS_WAND.name + "!");
+    pushLog("The King in Bramble will want to see this.");
   }
   state.mode = combat.returnMode;
   combat = null;
@@ -3313,12 +3409,35 @@ function move(dx, dy) {
   if (t === T.DUNGEON && state.mode === "overworld") {
     state.fromOverworld = { x: state.x, y: state.y };
     state.mode = "dungeon";
-    state.x = 1; state.y = 1;
+    state.dungeonLevel = 1; // always re-enter at the top — walking out resets your depth
+    var entryLevel = ensureDungeonLevel(1);
+    var doorSpot = findTileOnGrid(entryLevel, T.DOOR);
+    state.x = doorSpot.x; state.y = doorSpot.y;
     pushLog("Descend");
     autosave();
     renderAll();
     return;
   }
+  if (t === T.STAIRS_DOWN && state.mode === "dungeon") {
+    state.dungeonLevel += 1;
+    var nextLevel = ensureDungeonLevel(state.dungeonLevel);
+    var upSpot = findTileOnGrid(nextLevel, T.STAIRS_UP);
+    state.x = upSpot.x; state.y = upSpot.y;
+    pushLog("You descend to dungeon level " + state.dungeonLevel + ".");
+    autosave();
+    renderAll();
+    return;
+  }
+  if (t === T.STAIRS_UP && state.mode === "dungeon") {
+    state.dungeonLevel -= 1;
+    var prevLevel = ensureDungeonLevel(state.dungeonLevel);
+    var downSpot = findTileOnGrid(prevLevel, T.STAIRS_DOWN) || findTileOnGrid(prevLevel, T.DOOR);
+    state.x = downSpot.x; state.y = downSpot.y;
+    pushLog("You climb back to dungeon level " + state.dungeonLevel + ".");
+    renderAll();
+    return;
+  }
+  if (t === T.BOSS && state.mode === "dungeon") { openArchwizardBoss(); return; }
   if (t === T.ISLAND && state.mode === "overworld") {
     state.fromOverworld = { x: state.x, y: state.y };
     state.mode = "island";
@@ -3706,7 +3825,8 @@ function gatherSaveData() {
     party: party, sharedGold: sharedGold, potionCount: potionCount, inventory: inventory,
     state: state, ship: ship, horse: horse, car: car, helicopter: helicopter, rocket: rocket,
     tavernRecruit: tavernRecruit, monsterKillCounts: monsterKillCounts, wind: wind,
-    alienEncountersWon: alienEncountersWon, alienQuestComplete: alienQuestComplete
+    alienEncountersWon: alienEncountersWon, alienQuestComplete: alienQuestComplete,
+    hasWizardsWand: hasWizardsWand, wizardQuestComplete: wizardQuestComplete
   };
 }
 
@@ -3722,6 +3842,8 @@ function applySaveData(d) {
   wind = d.wind || { dir: "N", movesLeft: 5 };
   alienEncountersWon = d.alienEncountersWon || 0;
   alienQuestComplete = !!d.alienQuestComplete;
+  hasWizardsWand = !!d.hasWizardsWand;
+  wizardQuestComplete = !!d.wizardQuestComplete;
 }
 
 function saveToSlot(n, name) {
@@ -4002,7 +4124,35 @@ function openShop(category) {
 function openKing() {
   townScreen = "king";
   pushLog("-----Throne Room-----");
-  pushLog("The King nods, but has no words for you yet.");
+  if (state.mode === "islandTown") {
+    pushLog("The Harbor Master nods, but has no words for you yet.");
+  } else if (wizardQuestComplete) {
+    pushLog("\"Well met, hero. The realm still remembers your deed.\"");
+  } else if (hasWizardsWand) {
+    pushLog("\"You return... is that the Archwizard's Wand?\"");
+  } else {
+    pushLog("\"An Archwizard has fouled our dungeon's deepest hall.");
+    pushLog("Slay him and bring me his wand — 500 gold awaits.\"");
+  }
+  renderAll();
+}
+// Turns in the wand for the King's reward — removes it from wherever
+// it currently sits, whether it's still loose in inventory or someone
+// actually equipped it as a weapon in the meantime.
+function turnInWizardsWand() {
+  if (!hasWizardsWand || wizardQuestComplete) return;
+  // matched by name, not object identity — a save/load round-trip
+  // deserializes a structurally-identical but distinct copy of the item
+  var idx = inventory.findIndex(function (e) { return e.item && e.item.name === WIZARDS_WAND.name; });
+  if (idx !== -1) inventory.splice(idx, 1);
+  party.forEach(function (p) {
+    if (p.equippedWeapon && p.equippedWeapon.name === WIZARDS_WAND.name) { p.equippedWeapon = null; p.weaponBonus = 0; }
+  });
+  wizardQuestComplete = true;
+  sharedGold += 500;
+  pushLog("-----Quest Complete!-----");
+  pushLog("The King rewards you with 500 gold!");
+  townScreen = null;
   renderAll();
 }
 function openVaultChest(x, y) {
@@ -4018,6 +4168,15 @@ function openVaultChest(x, y) {
   var group = [];
   for (var i = 0; i < count; i++) group.push(makeMonsterInstance(ELITE_GUARD_DEF, 0, 0));
   enterArena(group, state.mode, "guard");
+}
+// The Bramble King's quest target — a fixed one-time boss tile at the far
+// end of dungeon level 8. Losing just returns you to the hospital as
+// normal; the tile only clears once he's actually beaten (see the
+// "wizardBoss" branch in endCombatVictory).
+function openArchwizardBoss() {
+  pushLog("-----The Archwizard-----");
+  pushLog("\"You dare intrude on my sanctum?\"");
+  enterArena([makeMonsterInstance(ARCHWIZARD_DEF, 0, 0)], state.mode, "wizardBoss");
 }
 function openStable() {
   townScreen = "stable";
@@ -4329,6 +4488,14 @@ function handleTownTap(lx, ly) {
   } else if (townScreen === "moonshop") {
     var my2 = 115 + 22; // after gold line
     if (ly >= my2 - 12 && ly < my2 + 6) { buyMoonArmor(); return; }
+  } else if (townScreen === "king") {
+    // "You have the wand! [tap T]" only appears (and is only tappable)
+    // on the mainland, quest not yet complete, wand in hand — see the
+    // matching render branch above for how this y is reached
+    if (state.mode === "town" && !wizardQuestComplete && hasWizardsWand) {
+      var ky = 115 + 18 + 20 + 18 + 22; // past the 4 quest-blurb lines to the wand row
+      if (ly >= ky - 12 && ly < ky + 6) { turnInWizardsWand(); return; }
+    }
   } else if (townScreen === "tavern") {
     var ry = 115 + 18 + 18 + 18 + 26 + 20; // Name/Race/Class/HP lines + "Retire whom" line
     for (var k = 0; k < party.length; k++) {
