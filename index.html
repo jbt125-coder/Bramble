@@ -3055,14 +3055,19 @@ function nearestMonsterTo(x, y) {
 function partyMemberAct(p, idx) {
   var target = nearestMonsterTo(p.ax, p.ay);
   if (!target) return;
-  if (dist(p.ax, p.ay, target.x, target.y) <= 1) {
+  // a ranged weapon (Bow/Boomerang/Fire Bow) lets this party member fight
+  // from its full range instead of closing to melee — same idea as how
+  // ranged monsters already hold their ground in monsterAct
+  var w = p.equippedWeapon;
+  var range = (w && w.ranged) ? w.range : 1;
+  if (dist(p.ax, p.ay, target.x, target.y) <= range) {
     var dmg = 1 + Math.floor(Math.random() * 5) + p.weaponBonus;
     var hit = Math.random() < 0.75;
     if (!hit) {
       pushLog(p.name + " misses " + target.name + ".");
     } else {
       target.hp -= dmg;
-      pushLog(p.name + " hits " + target.name + " for " + dmg + ".");
+      pushLog(p.name + (range > 1 ? " shoots " : " hits ") + target.name + " for " + dmg + ".");
       if (target.hp <= 0) {
         pushLog(target.name + " destroyed!");
         registerKill(target, idx);
