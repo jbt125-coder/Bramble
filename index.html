@@ -3844,6 +3844,20 @@ function applySaveData(d) {
   alienQuestComplete = !!d.alienQuestComplete;
   hasWizardsWand = !!d.hasWizardsWand;
   wizardQuestComplete = !!d.wizardQuestComplete;
+  // Old saves (from before the 8-level dungeon rework) have no
+  // dungeonLevel at all. Most of the time that's harmless — it just
+  // gets set to 1 the next time they walk into the dungeon tile — but a
+  // save made WHILE standing in the old single-room dungeon would leave
+  // state.mode === "dungeon" with dungeonLevel undefined, which
+  // generates a level with no door back out. Snap that case back to a
+  // safe, valid spot instead of trapping them.
+  if (state.mode === "dungeon" && !state.dungeonLevel) {
+    state.dungeonLevel = 1;
+    var legacyLevel1 = ensureDungeonLevel(1);
+    var legacyDoor = findTileOnGrid(legacyLevel1, T.DOOR);
+    state.x = legacyDoor.x; state.y = legacyDoor.y;
+    pushLog("(Your old save's dungeon depth wasn't tracked — placed you back at the entrance.)");
+  }
 }
 
 function saveToSlot(n, name) {
