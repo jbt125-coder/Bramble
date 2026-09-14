@@ -75,8 +75,8 @@
     <div id="cmdBtns">
       <button class="cmdBtn" id="btnAttack">ATTACK</button>
       <button class="cmdBtn" id="btnCast">CAST</button>
-      <button class="cmdBtn" id="btnGet">GET</button>
-      <button class="cmdBtn" id="btnStats">STATS</button>
+      <button class="cmdBtn" id="btnAction">ACTION</button>
+      <button class="cmdBtn" id="btnMenu">MENU</button>
       <button class="cmdBtn" id="btnRun">RUN</button>
       <button class="cmdBtn" id="btnFire" style="display:none;">FIRE</button>
       <button class="cmdBtn" id="btnDismount" style="display:none;">DISMOUNT</button>
@@ -2177,6 +2177,9 @@ function renderAll() {
   }
   if (townScreen) renderTownScreenOverlay();
   if (characterSheetIndex !== null) renderCharacterSheetOverlay();
+  if (equipPickerFor) renderEquipPickerOverlay();
+  if (menuScreen) renderMenuOverlay();
+  if (actionChoices) renderActionChoiceOverlay();
 
   // FIRE button only makes sense while actually sailing, out on the map
   // (not in combat, not in a town popup)
@@ -2439,9 +2442,18 @@ function renderCharacterSheetOverlay() {
 
   ctx.fillStyle = PAL.yellow;
   ctx.fillText("Equipment", 36, y); y += 18;
+  var weaponRowY = y;
   ctx.fillStyle = PAL.white;
-  ctx.fillText("Weapon: " + (p.equippedWeapon ? p.equippedWeapon.name + " (+" + p.equippedWeapon.dmgBonus + " dmg)" : "None"), 36, y); y += 18;
-  ctx.fillText("Armor: " + (p.armorBonus > 0 ? "+" + p.armorBonus + " def" : "None"), 36, y); y += 26;
+  ctx.fillText("Weapon: " + (p.equippedWeapon ? p.equippedWeapon.name + " (+" + p.equippedWeapon.dmgBonus + " dmg)" : "None"), 36, y);
+  ctx.fillStyle = PAL.waterLight;
+  ctx.fillText("[EQUIP]", LW - 42 - 60, y);
+  y += 18;
+  var armorRowY = y;
+  ctx.fillStyle = PAL.white;
+  ctx.fillText("Armor: " + (p.equippedArmor ? p.equippedArmor.name + " (+" + p.armorBonus + " def)" : "None"), 36, y);
+  ctx.fillStyle = PAL.waterLight;
+  ctx.fillText("[EQUIP]", LW - 42 - 60, y);
+  y += 26;
 
   ctx.fillStyle = PAL.yellow;
   ctx.fillText("Spells", 36, y); y += 18;
@@ -2457,19 +2469,96 @@ function renderCharacterSheetOverlay() {
   }
 }
 
-function handleCharacterSheetTap(lx, ly) {
-  var xr = closeXRect();
-  if (inRect(lx, ly, xr)) { characterSheetIndex = null; renderAll(); }
+// Fixed y-baselines for the Weapon/Armor rows above — kept in one place
+// so the tap handler's hit-test always matches what's actually drawn.
+function characterSheetEquipRowY() {
+  return { weapon: 219, armor: 237 };
 }
 
-// Close-X box, drawn top-right of the popup card; tap region matches
-// exactly what handleTownTap checks below.
-var CLOSE_X_SIZE = 26;
-function closeXRect() {
-  return { x: LW - 40 - 6, y: 61 + 6, w: CLOSE_X_SIZE, h: CLOSE_X_SIZE };
+function handleCharacterSheetTap(lx, ly) {
+  var xr = closeXRect();
+  if (inRect(lx, ly, xr)) { characterSheetIndex = null; renderAll(); return; }
+  var rows = characterSheetEquipRowY();
+  if (ly >= rows.weapon - 12 && ly < rows.weapon + 6) { equipPickerFor = { idx: characterSheetIndex, category: "weapon" }; renderAll(); return; }
+  if (ly >= rows.armor - 12 && ly < rows.armor + 6) { equipPickerFor = { idx: characterSheetIndex, category: "armor" }; renderAll(); return; }
 }
-function drawCloseX() {
-  var r = closeXRect();
+
+// ============================================================
+// EQUIP PICKER — drills down from the character sheet: pick a weapon
+// or armor piece out of the shared inventory (or unequip what's worn).
+// ============================================================
+function renderEquipPickerOverlay() {
+  var p = party[equipPickerFor.idx];
+  var cat = equipPickerFor.category;
+  if (!p) { equipPickerFor = null; return; }
+
+  px(30, 140, LW - 60, LH - 280, "#0a0a0a");
+  ctx.strokeStyle = PAL.purple;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(31, 141, LW - 62, LH - 282);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = PAL.white;
+  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.fillText("EQUIP " + cat.toUpperCase() + " — " + p.name, LW / 2, 165);
+  ctx.textAlign = "left";
+  ctx.font = "12px 'Courier New', monospace";
+
+  drawCloseX(equipCloseXRect());
+
+  var y = 190;
+  var equipped = cat === "weapon" ? p.equippedWeapon : p.equippedArmor;
+  if (equipped) {
+    ctx.fillStyle = PAL.red;
+    ctx.fillText("Unequip " + equipped.name, 44, y); y += 20;
+  }
+  var items = inventory.filter(function (e) { return e.category === cat; });
+  if (items.length === 0) {
+    ctx.fillStyle = PAL.gray;
+    ctx.fillText("Nothing in inventory to equip.", 44, y); y += 18;
+  } else {
+    ctx.fillStyle = PAL.white;
+    items.forEach(function (e) {
+      var bonus = cat === "weapon" ? e.item.dmgBonus : e.item.defBonus;
+      ctx.fillText(e.item.name + " (+" + bonus + (cat === "weapon" ? " dmg" : " def") + ")", 44, y); y += 18;
+    });
+  }
+}
+
+function handleEquipPickerTap(lx, ly) {
+  var xr = equipCloseXRect();
+  if (inRect(lx, ly, xr)) { equipPickerFor = null; renderAll(); return; }
+  var p = party[equipPickerFor.idx];
+  var cat = equipPickerFor.category;
+  var y = 190;
+  var equipped = cat === "weapon" ? p.equippedWeapon : p.equippedArmor;
+  if (equipped) {
+    if (ly >= y - 12 && ly < y + 6) { unequipItem(equipPickerFor.idx, cat); return; }
+    y += 20;
+  }
+  var items = inventory.filter(function (e) { return e.category === cat; });
+  for (var i = 0; i < items.length; i++) {
+    if (ly >= y - 12 && ly < y + 6) { equipItemFromInventory(equipPickerFor.idx, items[i]); return; }
+    y += 18;
+  }
+}
+
+// Close-X box, drawn top-right of a popup card; tap region matches
+// exactly what each overlay's tap handler checks. `closeXRect()` is the
+// standard-size popup's close-X; `closeXRectAt` lets a differently-sized
+// popup (like the equip picker) compute its own in the same corner.
+var CLOSE_X_SIZE = 26;
+function closeXRectAt(bx, bw, by) {
+  return { x: bx + bw - CLOSE_X_SIZE - 6, y: by + 6, w: CLOSE_X_SIZE, h: CLOSE_X_SIZE };
+}
+function closeXRect() {
+  return closeXRectAt(20, LW - 40, 60);
+}
+function equipCloseXRect() {
+  return closeXRectAt(30, LW - 60, 140);
+}
+function drawCloseX(r) {
+  r = r || closeXRect();
   ctx.strokeStyle = PAL.red;
   ctx.lineWidth = 2;
   ctx.strokeRect(r.x, r.y, r.w, r.h);
@@ -3183,6 +3272,7 @@ function move(dx, dy) {
     state.mode = "town";
     state.x = 22; state.y = 38; // just inside the south gate
     pushLog("Enter town");
+    autosave();
     renderAll();
     return;
   }
@@ -3191,6 +3281,7 @@ function move(dx, dy) {
     state.mode = "islandTown";
     state.x = 11; state.y = 16; // just inside the south gate
     pushLog("Enter town");
+    autosave();
     renderAll();
     return;
   }
@@ -3215,6 +3306,7 @@ function move(dx, dy) {
     state.mode = "moonTown";
     state.x = 7; state.y = 10;
     pushLog("Enter Luna Station");
+    autosave();
     renderAll();
     return;
   }
@@ -3223,6 +3315,7 @@ function move(dx, dy) {
     state.mode = "dungeon";
     state.x = 1; state.y = 1;
     pushLog("Descend");
+    autosave();
     renderAll();
     return;
   }
@@ -3266,6 +3359,7 @@ function move(dx, dy) {
     state.mode = "hutInterior";
     state.x = 4; state.y = 6; // just inside the door
     pushLog("You step into the hut.");
+    autosave();
     renderAll();
     return;
   }
@@ -3274,6 +3368,7 @@ function move(dx, dy) {
     state.mode = "churchInterior";
     state.x = 5; state.y = 7;
     pushLog("You step into the church.");
+    autosave();
     renderAll();
     return;
   }
@@ -3412,10 +3507,10 @@ function move(dx, dy) {
     }
   }
 
-  // ground item auto-notice (still requires GET to actually pick up)
+  // ground item auto-notice (still requires ACTION to actually pick up)
   var here = groundItemAt(state.mode, state.x, state.y);
   if (here) {
-    pushLog(here.kind === "gold" ? "Chest here. GET" : here.item.name + " here. GET");
+    pushLog(here.kind === "gold" ? "Chest here. ACTION" : here.item.name + " here. ACTION");
   }
 
   if (state.mode === "overworld" || state.mode === "dungeon" || state.mode === "island") {
@@ -3428,39 +3523,34 @@ function move(dx, dy) {
     tryAlienEncounter();
     tryVolcanoBurn();
   } else if (state.mode === "town" || state.mode === "islandTown") {
-    tryGuardTrouble();
     stepAllRoamingEntities();
     // the tavern keeper talks to you as soon as you're next to (or bump
-    // into) them — no need to press GET, unlike the other shopkeepers
+    // into) them — no need to press ACTION, unlike the other shopkeepers
     var tavernNpc = roamingNpcAdjacent();
     if (tavernNpc && tavernNpc.kind === "tavern") { openTavern(); return; }
   }
   renderAll();
 }
 
-// Very rare town scuffle — a guard, a bothered local, or a drunk picks a
-// fight. Uses the same brick/castle-style arena as the dungeon.
-function tryGuardTrouble() {
-  if (Math.random() < 0.0015) {
-    pushLog("A guard confronts you!");
-    var group = buildMonsterGroup(GUARD_DEF, true);
-    enterArena(group, state.mode, "guard");
-  }
+// Guards only show up for an actual reason now — stealing from the
+// vault (openVaultChest) or attacking a townsperson (see the ATTACK
+// button below) — never as a random ambient encounter.
+function triggerGuards() {
+  pushLog("Guards rush in!");
+  var group = buildMonsterGroup(GUARD_DEF, true);
+  enterArena(group, state.mode, "guard");
 }
 
 // ============================================================
 // COMMANDS
 // ============================================================
-function cmdGet() {
-  if (townScreen || confirmingRun) return;
-  // if a roaming shopkeeper is right next to you, GET doubles as "talk to
-  // them" and opens their shop, since they're no longer a fixed tile to
-  // walk onto directly
-  var npc = roamingNpcAdjacent();
-  if (npc && npc.kind === "tavern") { openTavern(); return; }
-  if (npc) { openShop(npc.kind === "armory" ? "armor" : "weapon"); return; }
+// ACTION replaces the old single-purpose GET button: it looks at
+// everything possible right here (talk to an adjacent shopkeeper, get an
+// item/open a chest underfoot) and either just does the one thing that's
+// possible, or — if more than one applies — pops up a small choice list.
+function pickUpGroundItem() {
   var here = groundItemAt(state.mode, state.x, state.y);
-  if (!here) { pushLog("Nothing to get"); renderAll(); return; }
+  if (!here) return;
   if (here.kind === "gold") {
     var g = 5 + Math.floor(Math.random() * 20);
     sharedGold += g;
@@ -3468,18 +3558,96 @@ function cmdGet() {
   } else if (here.category === "potion") {
     potionCount += 1;
     pushLog("Got " + here.item.name + "!");
-  } else if (here.category === "weapon") {
-    var leader = party[0];
-    leader.weaponBonus = Math.max(leader.weaponBonus, here.item.dmgBonus);
-    leader.equippedWeapon = here.item;
-    pushLog(leader.name + " equips " + here.item.name + "!");
-  } else if (here.category === "armor") {
-    var leader2 = party[0];
-    leader2.armorBonus = Math.max(leader2.armorBonus, here.item.defBonus);
-    pushLog(leader2.name + " equips " + here.item.name + "!");
+  } else if (here.category === "weapon" || here.category === "armor") {
+    addToInventory(here.category, here.item);
   }
   removeGroundItem(here);
   renderAll();
+}
+
+function talkToNpc(npc) {
+  if (npc.kind === "tavern") { openTavern(); return; }
+  openShop(npc.kind === "armory" ? "armor" : "weapon");
+}
+
+function cmdAction() {
+  if (townScreen || confirmingRun) return;
+  var choices = [];
+  var npc = roamingNpcAdjacent();
+  if (npc) {
+    var npcLabel = npc.kind === "tavern" ? "Talk to the tavern keeper"
+      : npc.kind === "armory" ? "Talk to the armorer"
+      : "Talk to the weaponsmith";
+    choices.push({ label: npcLabel, fn: function () { talkToNpc(npc); } });
+  }
+  var here = groundItemAt(state.mode, state.x, state.y);
+  if (here) {
+    var itemLabel = here.kind === "gold" ? "Open chest" : "Get " + here.item.name;
+    choices.push({ label: itemLabel, fn: pickUpGroundItem });
+  }
+  if (choices.length === 0) { pushLog("Nothing to do here."); renderAll(); return; }
+  if (choices.length === 1) { choices[0].fn(); return; }
+  actionChoices = choices;
+  renderAll();
+}
+
+// ============================================================
+// ACTION CHOICE POPUP — shown only when more than one thing is
+// possible right here; a single available action just happens directly.
+// ============================================================
+function actionChoiceRects() {
+  var n = actionChoices.length;
+  var boxW = 260, rowH = 32, padTop = 40, padBottom = 16;
+  var boxH = padTop + n * rowH + padBottom;
+  var boxX = LW / 2 - boxW / 2, boxY = LH / 2 - boxH / 2;
+  var rows = [];
+  for (var i = 0; i < n; i++) {
+    rows.push({ x: boxX + 16, y: boxY + padTop + i * rowH, w: boxW - 32, h: rowH - 8 });
+  }
+  return {
+    box: { x: boxX, y: boxY, w: boxW, h: boxH },
+    close: { x: boxX + boxW - 30, y: boxY + 6, w: 24, h: 24 },
+    rows: rows
+  };
+}
+
+function renderActionChoiceOverlay() {
+  var r = actionChoiceRects();
+  px(r.box.x, r.box.y, r.box.w, r.box.h, "#0a0a0a");
+  ctx.strokeStyle = PAL.purple;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(r.box.x, r.box.y, r.box.w, r.box.h);
+
+  drawCloseX(r.close);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = PAL.white;
+  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.fillText("What do you want to do?", r.box.x + r.box.w / 2, r.box.y + 24);
+  ctx.font = "12px 'Courier New', monospace";
+
+  actionChoices.forEach(function (c, i) {
+    var row = r.rows[i];
+    ctx.strokeStyle = PAL.purple;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(row.x, row.y, row.w, row.h);
+    ctx.fillStyle = PAL.white;
+    ctx.fillText(c.label, row.x + row.w / 2, row.y + row.h / 2 + 4);
+  });
+  ctx.textAlign = "left";
+}
+
+function handleActionChoiceTap(lx, ly) {
+  var r = actionChoiceRects();
+  if (inRect(lx, ly, r.close)) { actionChoices = null; renderAll(); return; }
+  for (var i = 0; i < r.rows.length; i++) {
+    if (inRect(lx, ly, r.rows[i])) {
+      var fn = actionChoices[i].fn;
+      actionChoices = null;
+      fn();
+      return;
+    }
+  }
 }
 
 function cmdCast() {
@@ -3507,13 +3675,143 @@ function cmdCast() {
   }
 }
 
-function cmdStats() {
-  if (townScreen || confirmingRun) return;
-  party.forEach(function (p) {
-    var line = p.name + (p.title ? " \"" + p.title + "\"" : "") + " " + p.cls + " L" + p.lvl + " H" + p.hp + "/" + p.maxHp;
-    pushLog(line);
-  });
+function cmdMenu() {
+  if (townScreen || confirmingRun || characterSheetIndex !== null) return;
+  menuScreen = "main";
   renderAll();
+}
+
+// ============================================================
+// SAVE / LOAD — 3 named browser-storage slots, plus a silent autosave
+// to whichever slot was last used, triggered on entering any building
+// or dungeon. There's no server or real filesystem here, so "a file the
+// player names" becomes a named localStorage slot instead.
+// ============================================================
+var currentSlot = null; // null | 1 | 2 | 3 — last slot manually saved/loaded
+var SAVE_KEY_PREFIX = "bramble_save_";
+
+function slotKey(n) { return SAVE_KEY_PREFIX + n; }
+
+function readSlot(n) {
+  try {
+    var raw = localStorage.getItem(slotKey(n));
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function gatherSaveData() {
+  return {
+    party: party, sharedGold: sharedGold, potionCount: potionCount, inventory: inventory,
+    state: state, ship: ship, horse: horse, car: car, helicopter: helicopter, rocket: rocket,
+    tavernRecruit: tavernRecruit, monsterKillCounts: monsterKillCounts, wind: wind,
+    alienEncountersWon: alienEncountersWon, alienQuestComplete: alienQuestComplete
+  };
+}
+
+function applySaveData(d) {
+  party = d.party;
+  sharedGold = d.sharedGold;
+  potionCount = d.potionCount;
+  inventory = d.inventory || [];
+  state = d.state;
+  ship = d.ship; horse = d.horse; car = d.car; helicopter = d.helicopter; rocket = d.rocket;
+  tavernRecruit = d.tavernRecruit || null;
+  monsterKillCounts = d.monsterKillCounts || {};
+  wind = d.wind || { dir: "N", movesLeft: 5 };
+  alienEncountersWon = d.alienEncountersWon || 0;
+  alienQuestComplete = !!d.alienQuestComplete;
+}
+
+function saveToSlot(n, name) {
+  var payload = { name: name, savedAt: Date.now(), data: gatherSaveData() };
+  try {
+    localStorage.setItem(slotKey(n), JSON.stringify(payload));
+    currentSlot = n;
+    pushLog("Saved to slot " + n + " (\"" + name + "\").");
+  } catch (e) {
+    pushLog("Save failed — your browser may be blocking storage.");
+  }
+  renderAll();
+}
+
+function loadFromSlot(n) {
+  var payload = readSlot(n);
+  if (!payload) { pushLog("Slot " + n + " is empty."); renderAll(); return; }
+  applySaveData(payload.data);
+  currentSlot = n;
+  menuScreen = null;
+  pushLog("Loaded \"" + payload.name + "\" from slot " + n + ".");
+  renderAll();
+}
+
+function promptSaveSlot(n) {
+  var existing = readSlot(n);
+  var defaultName = existing ? existing.name : ("Save " + n);
+  var name = window.prompt("Name this save:", defaultName);
+  if (name === null) return; // cancelled
+  name = name.trim() || defaultName;
+  saveToSlot(n, name);
+}
+
+// Silent autosave into whichever slot the player last saved/loaded —
+// does nothing until they've saved at least once, so it never forces a
+// naming prompt mid-adventure.
+function autosave() {
+  if (currentSlot === null) return;
+  var existing = readSlot(currentSlot);
+  var name = existing ? existing.name : "Autosave";
+  var payload = { name: name, savedAt: Date.now(), data: gatherSaveData() };
+  try { localStorage.setItem(slotKey(currentSlot), JSON.stringify(payload)); } catch (e) { /* ignore */ }
+}
+
+// ============================================================
+// MENU OVERLAY — save/load, 3 slots
+// ============================================================
+function renderMenuOverlay() {
+  px(20, 60, LW - 40, LH - 200, "#0a0a0a");
+  ctx.strokeStyle = PAL.purple;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(21, 61, LW - 42, LH - 202);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = PAL.white;
+  ctx.font = "bold 16px 'Courier New', monospace";
+  ctx.fillText("MENU", LW / 2, 90);
+  ctx.textAlign = "left";
+  ctx.font = "12px 'Courier New', monospace";
+  drawCloseX();
+
+  var y = 120;
+  for (var n = 1; n <= 3; n++) {
+    var payload = readSlot(n);
+    ctx.fillStyle = PAL.yellow;
+    ctx.fillText("Slot " + n + (n === currentSlot ? " (current)" : ""), 36, y); y += 18;
+    ctx.fillStyle = PAL.gray;
+    ctx.fillText(payload ? "\"" + payload.name + "\"" : "(empty)", 36, y); y += 20;
+    ctx.fillStyle = PAL.green;
+    ctx.fillText("[ SAVE ]", 36, y);
+    ctx.fillStyle = PAL.waterLight;
+    ctx.fillText("[ LOAD ]", 140, y);
+    y += 28;
+  }
+}
+
+function handleMenuTap(lx, ly) {
+  var xr = closeXRect();
+  if (inRect(lx, ly, xr)) { menuScreen = null; renderAll(); return; }
+  var y = 120;
+  for (var n = 1; n <= 3; n++) {
+    y += 18; // slot label
+    y += 20; // name/empty line
+    var btnY = y;
+    y += 28;
+    if (ly >= btnY - 12 && ly < btnY + 6) {
+      if (lx < 110) { promptSaveSlot(n); } else { loadFromSlot(n); }
+      return;
+    }
+  }
 }
 
 var confirmingRun = false;
@@ -3622,7 +3920,15 @@ function confirmRunNo() {
 // ============================================================
 var townScreen = null; // null | "shop" | "tavern" | "fountain"
 var characterSheetIndex = null; // null | index into party[] — set to open the character sheet overlay
+var equipPickerFor = null; // null | { idx, category: "weapon"|"armor" } — drills down from the character sheet
+var menuScreen = null; // null | "main" — the save/load menu opened from the MENU button
+var actionChoices = null; // null | [{ label, fn }] — the small popup the ACTION button shows when more than one thing is possible here
 var tavernRecruit = null;
+
+// Shared party inventory — weapons/armor go here on pickup or purchase
+// instead of auto-equipping the leader; any character can equip them
+// from their own character sheet.
+var inventory = []; // [{ category: "weapon"|"armor", item }]
 
 var RACES = ["Human", "Elf", "Dwarf", "Halfling", "Gnome"];
 var CLASSES = [
@@ -3762,8 +4068,7 @@ function buyMoonArmor() {
   var price = 200;
   if (sharedGold < price) { pushLog("Not enough gold"); renderAll(); return; }
   sharedGold -= price;
-  party[0].armorBonus = Math.max(party[0].armorBonus, MOON_ARMOR.defBonus);
-  pushLog(party[0].name + " equips " + MOON_ARMOR.name + "!");
+  addToInventory("armor", MOON_ARMOR);
   renderAll();
 }
 function openTavern() {
@@ -3810,6 +4115,7 @@ function giveHutGift(kind, itemOrIdx) {
   } else if (kind === "armor" && party[0].armorBonus > 0) {
     pushLog("You give a piece of armor.");
     party[0].armorBonus = 0;
+    party[0].equippedArmor = null;
     gaveSomething = true;
   }
   if (!gaveSomething) { pushLog("You have nothing like that to give."); renderAll(); return; }
@@ -3836,13 +4142,47 @@ function buyItem(category, item, price) {
   if (category === "potion") {
     potionCount += 1;
     pushLog("Bought " + item.name);
-  } else if (category === "weapon") {
-    party[0].weaponBonus = Math.max(party[0].weaponBonus, item.dmgBonus);
-    party[0].equippedWeapon = item; // remember the actual weapon (needed to know if it's ranged)
-    pushLog(party[0].name + " equips " + item.name);
-  } else if (category === "armor") {
-    party[0].armorBonus = Math.max(party[0].armorBonus, item.defBonus);
-    pushLog(party[0].name + " equips " + item.name);
+  } else if (category === "weapon" || category === "armor") {
+    addToInventory(category, item);
+  }
+  renderAll();
+}
+
+// ============================================================
+// SHARED INVENTORY — weapons/armor picked up or bought go here rather
+// than auto-equipping the leader; equipping/unequipping is done per
+// character from their character sheet (see the EQUIP picker overlay).
+// ============================================================
+function addToInventory(category, item) {
+  inventory.push({ category: category, item: item });
+  pushLog(item.name + " added to inventory. Equip it from a character's sheet.");
+}
+
+function equipItemFromInventory(idx, entry) {
+  var p = party[idx];
+  var cat = entry.category;
+  // swap out whatever's already in that slot, back into inventory, first
+  if (cat === "weapon" && p.equippedWeapon) inventory.push({ category: "weapon", item: p.equippedWeapon });
+  if (cat === "armor" && p.equippedArmor) inventory.push({ category: "armor", item: p.equippedArmor });
+  var i = inventory.indexOf(entry);
+  if (i !== -1) inventory.splice(i, 1);
+  if (cat === "weapon") { p.equippedWeapon = entry.item; p.weaponBonus = entry.item.dmgBonus; }
+  else { p.equippedArmor = entry.item; p.armorBonus = entry.item.defBonus; }
+  pushLog(p.name + " equips " + entry.item.name + "!");
+  equipPickerFor = null;
+  renderAll();
+}
+
+function unequipItem(idx, cat) {
+  var p = party[idx];
+  if (cat === "weapon" && p.equippedWeapon) {
+    inventory.push({ category: "weapon", item: p.equippedWeapon });
+    pushLog(p.name + " unequips " + p.equippedWeapon.name + ".");
+    p.equippedWeapon = null; p.weaponBonus = 0;
+  } else if (cat === "armor" && p.equippedArmor) {
+    inventory.push({ category: "armor", item: p.equippedArmor });
+    pushLog(p.name + " unequips " + p.equippedArmor.name + ".");
+    p.equippedArmor = null; p.armorBonus = 0;
   }
   renderAll();
 }
@@ -3883,12 +4223,21 @@ document.getElementById("btnS").onclick = function () { if (awaitingShotDirectio
 document.getElementById("btnE").onclick = function () { if (awaitingShotDirection) fireRangedWeapon("E"); else if (awaitingCannonDirection) fireCannon("E"); else if (state.mode === "combat") arenaMove(1, 0); else move(1, 0); };
 document.getElementById("btnW").onclick = function () { if (awaitingShotDirection) fireRangedWeapon("W"); else if (awaitingCannonDirection) fireCannon("W"); else if (state.mode === "combat") arenaMove(-1, 0); else move(-1, 0); };
 document.getElementById("btnAttack").onclick = function () {
-  if (state.mode === "combat") { combatPlayerAttack(); }
-  else { pushLog("Nothing to attack"); renderAll(); }
+  if (state.mode === "combat") { combatPlayerAttack(); return; }
+  if (townScreen || confirmingRun) return;
+  // attacking a townsperson is the other way (besides the vault) to
+  // actually bring guards down on you — no more random ambient guards
+  if ((state.mode === "town" || state.mode === "islandTown") && roamingNpcAdjacent()) {
+    pushLog("You attack a townsperson! Guards rush in!");
+    triggerGuards();
+    return;
+  }
+  pushLog("Nothing to attack");
+  renderAll();
 };
 document.getElementById("btnCast").onclick = cmdCast;
-document.getElementById("btnGet").onclick = cmdGet;
-document.getElementById("btnStats").onclick = cmdStats;
+document.getElementById("btnAction").onclick = cmdAction;
+document.getElementById("btnMenu").onclick = cmdMenu;
 document.getElementById("btnRun").onclick = cmdRun;
 document.getElementById("btnFire").onclick = cmdFire;
 document.getElementById("btnDismount").onclick = cmdDismount;
@@ -3914,9 +4263,9 @@ document.addEventListener("keydown", function (e) {
   else if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") { if (state.mode === "combat") arenaMove(0, 1); else move(0, 1); }
   else if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") { if (state.mode === "combat") arenaMove(-1, 0); else move(-1, 0); }
   else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") { if (state.mode === "combat") arenaMove(1, 0); else move(1, 0); }
-  else if (e.key === "g" || e.key === "G") cmdGet();
+  else if (e.key === "g" || e.key === "G") cmdAction();
   else if (e.key === "c" || e.key === "C") cmdCast();
-  else if (e.key === "t" || e.key === "T") cmdStats();
+  else if (e.key === "m" || e.key === "M") cmdMenu();
   else if (e.key === "r" || e.key === "R") cmdRun();
   else if (e.key === "f" || e.key === "F") cmdFire();
 });
@@ -3934,7 +4283,10 @@ canvas.addEventListener("click", function (e) {
   var ly = (e.clientY - rect.top) * scaleY;
 
   if (confirmingRun) { handleRunConfirmTap(lx, ly); return; }
+  if (equipPickerFor) { handleEquipPickerTap(lx, ly); return; }
   if (characterSheetIndex !== null) { handleCharacterSheetTap(lx, ly); return; }
+  if (menuScreen) { handleMenuTap(lx, ly); return; }
+  if (actionChoices) { handleActionChoiceTap(lx, ly); return; }
   if (townScreen) { handleTownTap(lx, ly); return; }
 
   // nothing open — tapping a party member's mini card opens their character sheet
