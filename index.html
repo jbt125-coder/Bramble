@@ -1936,20 +1936,110 @@ function drawRocketSprite(sx, sy, size) {
   ctx.restore();
 }
 
-function drawMonster(cx, cy, tileSize, name) {
-  if (name === "Guard") { drawHuman(cx, cy, tileSize, "#1a2a6a", "S"); return; } // dark blue uniform
-  if (name === "Wild Horse") { drawHorseSprite(cx - tileSize / 2, cy - tileSize / 2, tileSize); return; }
-  var glyph = MONSTER_EMOJI[name] || "👹";
+function drawMonster(cx, cy, tileSize, name, flashAlpha) {
+  if (name === "Guard") { drawHuman(cx, cy, tileSize, "#1a2a6a", "S"); } // dark blue uniform
+  else if (name === "Wild Horse") { drawHorseSprite(cx - tileSize / 2, cy - tileSize / 2, tileSize); }
+  else {
+    var glyph = MONSTER_EMOJI[name] || "👹";
+    ctx.save();
+    ctx.translate(cx, cy);
+    // Slightly smaller than a full tile — some emoji are multi-codepoint
+    // sequences (ZWJ, like the wizard/zombie/genie/fairy) that render wider
+    // than a single glyph at the same font size, so this keeps a safety
+    // margin on every side rather than assuming a uniform glyph width.
+    ctx.font = Math.round(tileSize * 0.72) + "px serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(glyph, 0, 1);
+    ctx.restore();
+  }
+  // a hit flash: a translucent red disc over the monster, fading out —
+  // works regardless of sprite type (emoji glyphs ignore fillStyle, so
+  // this overlay is how a hit actually reads as "hit" rather than tinting
+  // the glyph itself)
+  if (flashAlpha) {
+    ctx.save();
+    ctx.globalAlpha = flashAlpha;
+    ctx.fillStyle = "#ff2222";
+    ctx.beginPath();
+    ctx.arc(cx, cy, tileSize * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// COMBAT VFX — lightweight, purely cosmetic: a projectile streak for
+// ranged shots and a brief red flash on a monster that just took a hit.
+// Game logic (damage, hp, logs) always resolves instantly as before;
+// this just layers a short animation on top via its own rAF loop that
+// runs only while something is actually animating.
+// ============================================================
+var VFX_PROJECTILE_MS = 160;
+var VFX_FLASH_MS = 220;
+var vfxProjectiles = []; // { x0, y0, x1, y1, startedAt } — pixel coords
+var vfxAnimating = false;
+
+function arenaPx(gx, gy) {
+  return { x: MAP_INNER_X0 + gx * TILE + TILE / 2, y: MAP_INNER_Y0 + gy * TILE + TILE / 2 };
+}
+
+// Spawns a streak from one arena tile to another (attacker -> target).
+function spawnProjectile(fromGx, fromGy, toGx, toGy) {
+  var a = arenaPx(fromGx, fromGy), b = arenaPx(toGx, toGy);
+  vfxProjectiles.push({ x0: a.x, y0: a.y, x1: b.x, y1: b.y, startedAt: performance.now() });
+  ensureVfxLoop();
+}
+
+// Flashes a monster red, optionally delayed so it lands right as an
+// in-flight projectile actually arrives instead of flashing early.
+function flashMonster(m, delayMs) {
+  var now = performance.now();
+  var startAt = now + (delayMs || 0);
+  m.vfxFlashStart = startAt;
+  m.vfxFlashUntil = startAt + VFX_FLASH_MS;
+  ensureVfxLoop();
+}
+
+function ensureVfxLoop() {
+  if (vfxAnimating) return;
+  vfxAnimating = true;
+  requestAnimationFrame(vfxTick);
+}
+
+function vfxTick() {
+  var now = performance.now();
+  vfxProjectiles = vfxProjectiles.filter(function (p) { return now - p.startedAt < VFX_PROJECTILE_MS; });
+  var anyFlashing = combat && combat.monsters.some(function (m) { return m.vfxFlashUntil && now < m.vfxFlashUntil; });
+  renderAll();
+  if (vfxProjectiles.length > 0 || anyFlashing) {
+    requestAnimationFrame(vfxTick);
+  } else {
+    vfxAnimating = false;
+  }
+}
+
+// A little arrow shape (shaft + head) rotated to face its direction of
+// travel, drawn at its current interpolated position along the flight.
+function drawProjectile(p) {
+  var now = performance.now();
+  var t = Math.min(1, (now - p.startedAt) / VFX_PROJECTILE_MS);
+  var x = p.x0 + (p.x1 - p.x0) * t;
+  var y = p.y0 + (p.y1 - p.y0) * t;
+  var angle = Math.atan2(p.y1 - p.y0, p.x1 - p.x0);
   ctx.save();
-  ctx.translate(cx, cy);
-  // Slightly smaller than a full tile — some emoji are multi-codepoint
-  // sequences (ZWJ, like the wizard/zombie/genie/fairy) that render wider
-  // than a single glyph at the same font size, so this keeps a safety
-  // margin on every side rather than assuming a uniform glyph width.
-  ctx.font = Math.round(tileSize * 0.72) + "px serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(glyph, 0, 1);
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.strokeStyle = PAL.gold;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-7, 0); ctx.lineTo(5, 0);
+  ctx.stroke();
+  ctx.fillStyle = PAL.gold;
+  ctx.beginPath();
+  ctx.moveTo(7, 0); ctx.lineTo(2, -3); ctx.lineTo(2, 3);
+  ctx.closePath();
+  ctx.fill();
   ctx.restore();
 }
 
@@ -2296,10 +2386,15 @@ function renderArena() {
     }
   }
   // monsters
+  var vfxNow = performance.now();
   combat.monsters.forEach(function (m) {
     if (m.hp <= 0) return;
     var sx = MAP_INNER_X0 + m.x * TILE, sy = MAP_INNER_Y0 + m.y * TILE;
-    drawMonster(sx + TILE / 2, sy + TILE / 2, TILE, m.name);
+    var flashAlpha = 0;
+    if (m.vfxFlashUntil && vfxNow >= m.vfxFlashStart && vfxNow < m.vfxFlashUntil) {
+      flashAlpha = 0.75 * (1 - (vfxNow - m.vfxFlashStart) / VFX_FLASH_MS);
+    }
+    drawMonster(sx + TILE / 2, sy + TILE / 2, TILE, m.name, flashAlpha);
   });
   // party members, leader drawn with facing, others as plain humans
   party.forEach(function (p, i) {
@@ -2308,6 +2403,8 @@ function renderArena() {
     if (i === 0) drawPartyLeader(sx + TILE / 2, sy + TILE / 2, TILE, state.facing);
     else drawHuman(sx + TILE / 2, sy + TILE / 2, TILE, p.color, "S");
   });
+  // in-flight arrows/boomerangs, drawn on top of everything
+  vfxProjectiles.forEach(drawProjectile);
 }
 
 // ============================================================
@@ -3055,14 +3152,21 @@ function nearestMonsterTo(x, y) {
 function partyMemberAct(p, idx) {
   var target = nearestMonsterTo(p.ax, p.ay);
   if (!target) return;
-  if (dist(p.ax, p.ay, target.x, target.y) <= 1) {
+  // a ranged weapon (Bow/Boomerang/Fire Bow) lets this party member fight
+  // from its full range instead of closing to melee — same idea as how
+  // ranged monsters already hold their ground in monsterAct
+  var w = p.equippedWeapon;
+  var range = (w && w.ranged) ? w.range : 1;
+  if (dist(p.ax, p.ay, target.x, target.y) <= range) {
     var dmg = 1 + Math.floor(Math.random() * 5) + p.weaponBonus;
     var hit = Math.random() < 0.75;
+    if (range > 1) spawnProjectile(p.ax, p.ay, target.x, target.y);
     if (!hit) {
       pushLog(p.name + " misses " + target.name + ".");
     } else {
       target.hp -= dmg;
-      pushLog(p.name + " hits " + target.name + " for " + dmg + ".");
+      pushLog(p.name + (range > 1 ? " shoots " : " hits ") + target.name + " for " + dmg + ".");
+      flashMonster(target, range > 1 ? VFX_PROJECTILE_MS : 0);
       if (target.hp <= 0) {
         pushLog(target.name + " destroyed!");
         registerKill(target, idx);
@@ -3125,6 +3229,7 @@ function arenaMove(dx, dy) {
     } else {
       bumped.hp -= dmg;
       pushLog("Hit! Dam:" + dmg);
+      flashMonster(bumped);
       if (bumped.hp <= 0) {
         pushLog(bumped.name + " destroyed!");
         registerKill(bumped, 0);
@@ -3164,6 +3269,7 @@ function combatPlayerAttack() {
   } else {
     target.hp -= dmg;
     pushLog("Hit! Dam:" + dmg);
+    flashMonster(target);
     if (target.hp <= 0) {
       pushLog(target.name + " destroyed!");
       registerKill(target, 0);
@@ -3206,16 +3312,19 @@ function fireRangedWeapon(dir) {
   pushLog("-----" + leader.name + "-----");
   pushLog("Fires the " + w.name + " " + facingWord(dir) + "!");
   if (!hitMonster) {
+    spawnProjectile(leader.ax, leader.ay, leader.ax + d[0] * w.range, leader.ay + d[1] * w.range);
     pushLog("The shot flies wide.");
     combatTick(0);
     return;
   }
+  spawnProjectile(leader.ax, leader.ay, hitMonster.x, hitMonster.y);
   var shots = w.returns ? 2 : 1; // Boomerang hits going out AND coming back
   for (var s = 0; s < shots; s++) {
     if (hitMonster.hp <= 0) break;
     var dmg = 2 + Math.floor(Math.random() * 6) + w.dmgBonus;
     hitMonster.hp -= dmg;
     pushLog((s === 0 ? "Hit! " : "It returns and hits again! ") + "Dam:" + dmg);
+    flashMonster(hitMonster, VFX_PROJECTILE_MS);
   }
   if (hitMonster.hp <= 0) {
     pushLog(hitMonster.name + " destroyed!");
