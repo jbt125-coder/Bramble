@@ -4565,11 +4565,14 @@ function giveHutGift(kind, itemOrIdx) {
   party.forEach(function (p) { if (p.alive) p.hp = p.maxHp; });
   pushLog(anyHurt ? "Touched, they tend your wounds. Party healed." : "Touched by the gift, though you're already well.");
   // a gift of anything but gold earns more than healing — the stranger
-  // opens up, and in the dog hut that's the spark for the dog's own quest
-  if (kind !== "gold" && state.inDogHut && !dogQuestStarted && !hasRescuedDog) {
+  // opens up and shares a story, which is what kicks off a quest. Any
+  // hut's stranger can tell this one, not just the one holding the dog,
+  // so giving a gift is a valid way to discover the quest on its own.
+  if (kind !== "gold" && !dogQuestStarted && !hasRescuedDog && !dogQuestComplete) {
     dogQuestStarted = true;
-    pushLog("\"Bless you,\" they add. \"By the way — there's a");
-    pushLog("frightened dog holed up in the back room. Poor thing.\"");
+    pushLog("\"Bless you,\" they add. \"Say — a boy in Bramble");
+    pushLog("has lost his dog. Poor thing's probably hiding");
+    pushLog("in one of the huts scattered about.\"");
   }
   townScreen = null;
   renderAll();
