@@ -112,7 +112,7 @@ var BOTBAR_H = 56;      // bottom party strip (2 members side by side)
 var LOG_H = 70;         // description/log text area, below everything
 var BORDER = 8;
 var COORD_GAP = 20;     // room for the "(x)(y)" readout above the map border
-var LOC_GAP = 20;       // room for the location-name banner below the map border
+var LOC_GAP = 34;       // room for the location-name banner (plus an optional active-quest line) below the map border
 
 var MAP_X0 = 6;
 var MAP_OUTER_W = LW - 12;
@@ -160,7 +160,7 @@ var T = {
   STABLE: 21, PORTAL: 22, MOON_GRASS: 23, MOON_SHOP: 24, MOON_PORTAL: 25, ROCKET: 26,
   HUT: 27, MOAI: 28, SHRINE: 29, CHURCH: 30, GARDEN_FOUNTAIN: 31, VOLCANO: 32, ASIA_CASTLE: 33,
   GRAVE: 34, BRIDGE: 35, BED: 36, MOURNER: 37, HUT_NPC: 38,
-  STAIRS_DOWN: 39, STAIRS_UP: 40, BOSS: 41
+  STAIRS_DOWN: 39, STAIRS_UP: 40, BOSS: 41, QUEST_BOY: 42
 };
 
 function mkMap(w, h, fill) {
@@ -177,6 +177,11 @@ var OW_W = 100, OW_H = 90;
 // the player's starting position matches the safe-zone carved at the
 // continent's center in buildOverworld() — a few tiles west of the town
 var OW_START_X = Math.floor(OW_W / 2) - 12, OW_START_Y = Math.floor(OW_H / 2);
+// positions of the 3 scattered huts, recorded as placeScatteredLandmarks()
+// runs during buildOverworld() below, so a specific hut can later be
+// designated for a quest (e.g. the dog hut)
+var hutPositions = [];
+var dogHutPos = null; // set right after buildOverworld() runs, below
 // ---------- clustered terrain generation ----------
 // Instead of rolling each tile independently (which scatters single tiles
 // everywhere), we seed a handful of "blob centers" per feature type and
@@ -305,6 +310,7 @@ function placeScatteredLandmarks(g, rand, castleR, castleC) {
         if (d < p.minDistFromCastle) continue;
       }
       g[r][c] = p.type;
+      if (p.type === T.HUT) hutPositions.push({ x: c, y: r });
       placed++;
     }
   });
@@ -451,6 +457,7 @@ function buildTown() {
   for (var sr = 9; sr < 15; sr++) g[sr][8] = T.WATER;
   g[12][8] = T.BRIDGE;
   g[11][6] = T.GARDEN_FOUNTAIN;
+  g[10][5] = T.QUEST_BOY; // a boy waiting by the fountain, looking for his lost dog
 
   // ---------- Graveyard — its own walled area, east-center, mirroring
   // the garden, with a scatter of graves ----------
@@ -650,6 +657,9 @@ function buildIslandTown() {
 }
 
 var overworldGrid = buildOverworld();
+// designate the first-placed hut as the one holding the lost dog — reuses
+// an existing hut (kept well clear of the castle) rather than adding a new one
+dogHutPos = hutPositions[0] || null;
 var townGrid = buildTown();
 var islandGrid = buildIslandOverworld();
 var islandTownGrid = buildIslandTown();
@@ -755,6 +765,16 @@ var QUEST_REWARD_ITEM = { name: "Starforged Blade", dmgBonus: 12 };
 var hasWizardsWand = false;
 var wizardQuestComplete = false;
 var WIZARDS_WAND = { name: "Archwizard's Wand", dmgBonus: 10, emoji: "🪄" };
+
+// ---------- hut quests: give a hut's kindly stranger anything but gold
+// and, alongside the usual healing, they may spin off a side quest ----------
+// (dogHutPos itself is declared up near hutPositions, and assigned right
+// after buildOverworld() runs, so it's ready before buildTown() needs it)
+var dogQuestStarted = false;
+var dogQuestComplete = false;
+var hasRescuedDog = false;
+var DOG_NAME = "Biscuit";
+var DOG_TILE = { x: 4, y: 5 }; // spot inside the designated dog hut where the dog waits
 
 // Places the ISLAND marker at a random open-water tile on the main
 // overworld, far enough from the mainland's coastline to feel like a real
@@ -1491,6 +1511,14 @@ function drawMapBorder() {
   if (state.mounted) label += "  (Mounted)";
   else if (state.sailing) label += "  (Sailing)";
   ctx.fillText(label, midX, LOCLABEL_Y + 12);
+
+  // active quest line, shown just below the location banner while a quest is underway
+  var questLine = activeQuestLine();
+  if (questLine) {
+    ctx.fillStyle = PAL.gold;
+    ctx.font = "11px 'Courier New', monospace";
+    ctx.fillText(questLine, midX, LOCLABEL_Y + 27);
+  }
   ctx.textAlign = "left";
 }
 
@@ -1507,6 +1535,17 @@ function modeLabel() {
   if (state.sailing) return wind.dir === "CALM" ? "DEAD CALM" : facingWord(wind.dir).toUpperCase() + " WIND";
   if (state.mode === "island") return "UNCHARTED ISLE";
   return "SOUTHWIND COAST";
+}
+
+// Text for the active-quest line shown under the location banner, or
+// null when no quest is currently underway.
+function activeQuestLine() {
+  if (dogQuestStarted && !dogQuestComplete) {
+    return hasRescuedDog
+      ? "Quest: Bring " + DOG_NAME + " back to the boy in Bramble"
+      : "Quest: Find the boy's lost dog, " + DOG_NAME;
+  }
+  return null;
 }
 
 // ============================================================
@@ -1681,7 +1720,7 @@ function drawTile(sx, sy, size, type, gx, gy) {
     px(sx, sy, size, size, "#1a1a22");
     drawHuman(sx + size / 2, sy + size / 2, size, "#66ccff", "S");
   } else if (type === T.HUT || type === T.MOAI || type === T.SHRINE || type === T.CHURCH ||
-             type === T.GARDEN_FOUNTAIN || type === T.ASIA_CASTLE) {
+             type === T.GARDEN_FOUNTAIN || type === T.ASIA_CASTLE || type === T.QUEST_BOY) {
     // these landmarks sit on ordinary grass — draw the grass texture
     // underneath, and let the emoji itself be drawn in a later pass
     // (see renderMap's second pass) so it can never be clipped by a
@@ -1876,6 +1915,7 @@ LANDMARK_EMOJI[T.ASIA_CASTLE] = "🏯";
 LANDMARK_EMOJI[T.GRAVE] = "🪦";
 LANDMARK_EMOJI[T.BED] = "🛏️";
 LANDMARK_EMOJI[T.MOURNER] = "🧎";
+LANDMARK_EMOJI[T.QUEST_BOY] = "🏃🏻‍♂️‍➡️";
 
 var MONSTER_EMOJI = {
   "Orc": "👹",
@@ -2191,6 +2231,8 @@ function renderMap() {
       var lgx = state.x - half + lvx, lgy = state.y - half + lvy;
       var lt = tileAt(lgx, lgy);
       var glyph = LANDMARK_EMOJI[lt];
+      if (state.mode === "hutInterior" && state.inDogHut && !hasRescuedDog &&
+          lgx === DOG_TILE.x && lgy === DOG_TILE.y) glyph = "🐕";
       if (!glyph) continue;
       var lsx = MAP_INNER_X0 + lvx * TILE, lsy = MAP_INNER_Y0 + lvy * TILE;
       drawEmojiTile(lsx, lsy, TILE, glyph);
@@ -2494,7 +2536,8 @@ function renderTownScreenOverlay() {
   var title = townScreen === "shop" ? "WEAPONSMITH" : townScreen === "armory" ? "ARMORY"
     : townScreen === "tavern" ? "TAVERN" : townScreen === "fountain" ? "FOUNTAIN"
     : townScreen === "king" ? "THRONE ROOM" : townScreen === "stable" ? "STABLE"
-    : townScreen === "moonshop" ? "LUNAR ARMORY" : townScreen === "hutGift" ? "A KINDLY STRANGER" : "HEALER";
+    : townScreen === "moonshop" ? "LUNAR ARMORY" : townScreen === "hutGift" ? "A KINDLY STRANGER"
+    : townScreen === "questBoy" ? "A BOY BY THE FOUNTAIN" : "HEALER";
   ctx.fillText(title, LW / 2, 90);
   ctx.textAlign = "left";
   ctx.font = "12px 'Courier New', monospace";
@@ -2602,6 +2645,24 @@ function renderTownScreenOverlay() {
     }
     if (party[0].armorBonus > 0) {
       ctx.fillText("Your armor  [tap A]", 36, y); y += 18;
+    }
+  } else if (townScreen === "questBoy") {
+    ctx.fillStyle = PAL.white;
+    if (dogQuestComplete) {
+      ctx.fillText("\"Thank you again for finding " + DOG_NAME + "!\"", 36, y); y += 20;
+      ctx.fillText("\"We're both so happy.\"", 36, y); y += 18;
+    } else if (hasRescuedDog) {
+      ctx.fillText("\"Is that... " + DOG_NAME + "?! You found him!\"", 36, y); y += 22;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Hand over the dog  [tap H]", 36, y); y += 18;
+    } else if (dogQuestStarted) {
+      ctx.fillText("\"Please, if you see " + DOG_NAME + ",", 36, y); y += 18;
+      ctx.fillText("bring him back. He ran off toward", 36, y); y += 18;
+      ctx.fillText("one of the huts.\"", 36, y); y += 18;
+    } else {
+      ctx.fillText("\"Have you seen my dog, " + DOG_NAME + "?", 36, y); y += 18;
+      ctx.fillText("He ran off toward one of the huts.", 36, y); y += 18;
+      ctx.fillText("Please, bring him home!\"", 36, y); y += 18;
     }
   }
 }
@@ -3663,10 +3724,14 @@ function move(dx, dy) {
   if (t === T.KING) { openKing(); return; }
   if (t === T.CHEST) { openVaultChest(nx, ny); return; }
   if (t === T.HUT_NPC) { openHutGift(); return; }
+  if (t === T.QUEST_BOY) { openQuestBoy(); return; }
+  if (state.mode === "hutInterior" && state.inDogHut && !hasRescuedDog &&
+      nx === DOG_TILE.x && ny === DOG_TILE.y) { rescueDog(); return; }
   if (t === T.STABLE) { openStable(); return; }
   if (t === T.MOON_SHOP) { openMoonShop(); return; }
   if (t === T.HUT) {
     state.fromBuilding = { mode: state.mode, x: state.x, y: state.y };
+    state.inDogHut = state.mode === "overworld" && !!dogHutPos && nx === dogHutPos.x && ny === dogHutPos.y;
     state.mode = "hutInterior";
     state.x = 4; state.y = 6; // just inside the door
     pushLog("You step into the hut.");
@@ -4015,7 +4080,8 @@ function gatherSaveData() {
     state: state, ship: ship, horse: horse, car: car, helicopter: helicopter, rocket: rocket,
     tavernRecruit: tavernRecruit, monsterKillCounts: monsterKillCounts, wind: wind,
     alienEncountersWon: alienEncountersWon, alienQuestComplete: alienQuestComplete,
-    hasWizardsWand: hasWizardsWand, wizardQuestComplete: wizardQuestComplete
+    hasWizardsWand: hasWizardsWand, wizardQuestComplete: wizardQuestComplete,
+    dogQuestStarted: dogQuestStarted, dogQuestComplete: dogQuestComplete, hasRescuedDog: hasRescuedDog
   };
 }
 
@@ -4040,6 +4106,9 @@ function applySaveData(d) {
   alienQuestComplete = !!d.alienQuestComplete;
   hasWizardsWand = !!d.hasWizardsWand;
   wizardQuestComplete = !!d.wizardQuestComplete;
+  dogQuestStarted = !!d.dogQuestStarted;
+  dogQuestComplete = !!d.dogQuestComplete;
+  hasRescuedDog = !!d.hasRescuedDog;
   // Old saves (from before the 8-level dungeon rework) have no
   // dungeonLevel at all. Most of the time that's harmless — it just
   // gets set to 1 the next time they walk into the dungeon tile — but a
@@ -4495,6 +4564,52 @@ function giveHutGift(kind, itemOrIdx) {
   var anyHurt = party.some(function (p) { return p.alive && p.hp < p.maxHp; });
   party.forEach(function (p) { if (p.alive) p.hp = p.maxHp; });
   pushLog(anyHurt ? "Touched, they tend your wounds. Party healed." : "Touched by the gift, though you're already well.");
+  // a gift of anything but gold earns more than healing — the stranger
+  // opens up, and in the dog hut that's the spark for the dog's own quest
+  if (kind !== "gold" && state.inDogHut && !dogQuestStarted && !hasRescuedDog) {
+    dogQuestStarted = true;
+    pushLog("\"Bless you,\" they add. \"By the way — there's a");
+    pushLog("frightened dog holed up in the back room. Poor thing.\"");
+  }
+  townScreen = null;
+  renderAll();
+}
+function openQuestBoy() {
+  townScreen = "questBoy";
+  pushLog("-----A Boy by the Fountain-----");
+  if (dogQuestComplete) {
+    pushLog("\"Thank you again for finding " + DOG_NAME + "!\"");
+  } else if (hasRescuedDog) {
+    pushLog("\"Is that... " + DOG_NAME + "?! You found him!\"");
+  } else if (dogQuestStarted) {
+    pushLog("\"Please, if you see " + DOG_NAME + ", bring him back.");
+    pushLog("He ran off toward one of the huts.\"");
+  } else {
+    pushLog("\"Have you seen my dog, " + DOG_NAME + "?");
+    pushLog("He ran off toward one of the huts.");
+    pushLog("Please, bring him home!\"");
+    dogQuestStarted = true;
+  }
+  renderAll();
+}
+// The dog waits in whichever hut was designated `dogHutPos` — bumping
+// into it there (see move()) calls this directly, no picker needed.
+function rescueDog() {
+  if (hasRescuedDog) return;
+  hasRescuedDog = true;
+  dogQuestStarted = true;
+  pushLog("A frightened dog cowers in the corner.");
+  pushLog("You coax him out gently — " + DOG_NAME + " is safe!");
+  renderAll();
+}
+function turnInDog() {
+  if (!hasRescuedDog || dogQuestComplete) return;
+  dogQuestComplete = true;
+  var reward = 30;
+  sharedGold += reward;
+  pushLog("-----Quest Complete!-----");
+  pushLog("The boy hugs " + DOG_NAME + " tight. \"Thank you!\"");
+  pushLog("He presses " + reward + " gold into your hand.");
   townScreen = null;
   renderAll();
 }
@@ -4750,6 +4865,14 @@ function handleTownTap(lx, ly) {
     }
     if (party[0].armorBonus > 0) {
       if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("armor"); return; }
+    }
+  } else if (townScreen === "questBoy") {
+    // "Hand over the dog [tap H]" only appears (and is only tappable)
+    // once the dog's been rescued and the quest isn't already turned in —
+    // see the matching render branch above for how this y is reached
+    if (hasRescuedDog && !dogQuestComplete) {
+      var by = 115 + 22; // past the "Is that... found him!" line to the hand-over row
+      if (ly >= by - 12 && ly < by + 6) { turnInDog(); return; }
     }
   }
 }
