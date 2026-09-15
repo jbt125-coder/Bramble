@@ -1100,13 +1100,15 @@ function nearTileType(tileType) {
 function spawnMapMonster(screenKey) {
   // While sailing, wandering encounters draw from the aquatic pool —
   // land monsters never spawn out on the open water. The Kraken is a
-  // rare, much tougher mini-boss variant of that same aquatic encounter.
+  // rare, much tougher mini-boss variant of that same aquatic encounter;
+  // Sea Serpent and Merman split the rest of the water encounters.
   // In the dungeon, Wizard or Bat can appear instead of the land pool.
   // Near forest/mountain terrain, a chance of Giant Wasp/Monkey (forest),
   // Giant Eagle/Yeti (forest or mountain) instead of the general pool.
   var def;
   if (state.sailing) {
-    def = Math.random() < 0.06 ? KRAKEN_DEF : SEA_SERPENT_DEF;
+    var waterRoll = Math.random();
+    def = waterRoll < 0.06 ? KRAKEN_DEF : waterRoll < 0.53 ? SEA_SERPENT_DEF : MERMAN_DEF;
   } else if (screenKey === "dungeon" && Math.random() < 0.35) {
     def = Math.random() < 0.5 ? WIZARD_DEF : BAT_DEF;
   } else if (nearTileType(T.FOREST) && Math.random() < 0.3) {
@@ -1216,9 +1218,13 @@ var KRAKEN_DEF = { name: "Kraken", hp: 32, dmg: [4, 12], gold: [20, 45], xp: 22,
 var PHOENIX_DEF = { name: "Phoenix", hp: 20, dmg: [3, 10], gold: [15, 30], xp: 18 };
 var FIRE_BOW = { name: "Fire Bow", dmgBonus: 8, emoji: "🏹", ranged: true, range: 7 };
 var seenAnyVolcano = false; // tracks whether the guaranteed first Phoenix has already happened
-// Sea Serpents are the only wandering monster that can enter/patrol water —
-// everything else is land-bound and will never chase you out onto the ocean.
+// Sea Serpents, Krakens, and Mermen are the only wandering monsters that
+// can enter/patrol water — everything else is land-bound and will never
+// chase you out onto the ocean.
 var SEA_SERPENT_DEF = { name: "Sea Serpent", hp: 16, dmg: [2, 8], gold: [5, 15], xp: 9, aquatic: true };
+// Mermen lurk just under the surface — a bit tougher than a Sea Serpent,
+// nowhere near as dangerous as a Kraken.
+var MERMAN_DEF = { name: "Merman", hp: 20, dmg: [3, 9], gold: [8, 20], xp: 12, aquatic: true };
 // Pirates only appear via the dedicated water encounter (not the general
 // wandering-monster pool) — winning grants a ship.
 var PIRATE_DEF = { name: "Pirate", hp: 14, dmg: [2, 7], gold: [10, 25], xp: 10 };
@@ -1892,9 +1898,11 @@ var MONSTER_EMOJI = {
   "Wolf": "🐺",
   "Giant Eagle": "🦅",
   "Monkey": "🐒",
-  "Yeti": "🫈"
-  // Guard and Wild Horse are NOT in this map — they use their own drawn
-  // pixel-art sprites (drawGuard/existing horse art), not emoji.
+  "Yeti": "🫈",
+  "Phoenix": "🐦‍🔥",
+  "Merman": "🧜🏽‍♂️"
+  // Guard, Elite Guard, Wild Horse, and Archwizard are NOT in this map —
+  // they use their own drawn pixel-art sprites, not emoji (see drawMonster).
 };
 
 // Standalone horse silhouette (no rider, no assumed background) — the
@@ -1937,7 +1945,19 @@ function drawRocketSprite(sx, sy, size) {
 
 function drawMonster(cx, cy, tileSize, name, flashAlpha) {
   if (name === "Guard") { drawHuman(cx, cy, tileSize, "#1a2a6a", "S"); } // dark blue uniform
+  else if (name === "Elite Guard") {
+    drawHuman(cx, cy, tileSize, "#2a3a9a", "S"); // brighter blue — a cut above a regular guard
+    px(cx - tileSize * 0.08, cy - tileSize * 0.4, tileSize * 0.16, tileSize * 0.07, PAL.gold); // gold trim
+  }
   else if (name === "Wild Horse") { drawHorseSprite(cx - tileSize / 2, cy - tileSize / 2, tileSize); }
+  else if (name === "Archwizard") {
+    // same magenta robed figure + glow ring as his dungeon-level-8 tile,
+    // so he reads as the same boss once the fight actually starts
+    drawHuman(cx, cy, tileSize, "#cc33cc", "S");
+    ctx.strokeStyle = "#ff66ff";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, tileSize * 0.42, 0, Math.PI * 2); ctx.stroke();
+  }
   else {
     var glyph = MONSTER_EMOJI[name] || "👹";
     ctx.save();
@@ -2963,7 +2983,7 @@ function startCombatWithMonster(mapMonster, screenKey) {
 var SPECIAL_MONSTER_DEFS = [
   SEA_SERPENT_DEF, PIRATE_DEF, GUARD_DEF, WILD_HORSE_DEF, WIZARD_DEF,
   BAT_DEF, GIANT_WASP_DEF, GIANT_EAGLE_DEF, MONKEY_DEF, YETI_DEF, KRAKEN_DEF, ALIEN_DEF,
-  PHOENIX_DEF, ELITE_GUARD_DEF, ARCHWIZARD_DEF
+  PHOENIX_DEF, ELITE_GUARD_DEF, ARCHWIZARD_DEF, MERMAN_DEF
 ];
 function findMonsterDef(name) {
   for (var i = 0; i < MONSTER_DEFS.length; i++) {
