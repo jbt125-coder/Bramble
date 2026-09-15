@@ -869,7 +869,6 @@ var party = [
 ];
 party.forEach(function (p) { p.clsEmoji = pickClassEmoji(p.cls, p.gender); });
 var sharedGold = 120;
-var potionCount = 2;
 
 // per-monster-type kill counters -> difficulty tier (every 5 kills = +1 tier)
 var monsterKillCounts = {}; // name -> count
@@ -1101,13 +1100,15 @@ function nearTileType(tileType) {
 function spawnMapMonster(screenKey) {
   // While sailing, wandering encounters draw from the aquatic pool —
   // land monsters never spawn out on the open water. The Kraken is a
-  // rare, much tougher mini-boss variant of that same aquatic encounter.
+  // rare, much tougher mini-boss variant of that same aquatic encounter;
+  // Sea Serpent and Merman split the rest of the water encounters.
   // In the dungeon, Wizard or Bat can appear instead of the land pool.
   // Near forest/mountain terrain, a chance of Giant Wasp/Monkey (forest),
   // Giant Eagle/Yeti (forest or mountain) instead of the general pool.
   var def;
   if (state.sailing) {
-    def = Math.random() < 0.06 ? KRAKEN_DEF : SEA_SERPENT_DEF;
+    var waterRoll = Math.random();
+    def = waterRoll < 0.06 ? KRAKEN_DEF : waterRoll < 0.53 ? SEA_SERPENT_DEF : MERMAN_DEF;
   } else if (screenKey === "dungeon" && Math.random() < 0.35) {
     def = Math.random() < 0.5 ? WIZARD_DEF : BAT_DEF;
   } else if (nearTileType(T.FOREST) && Math.random() < 0.3) {
@@ -1217,9 +1218,13 @@ var KRAKEN_DEF = { name: "Kraken", hp: 32, dmg: [4, 12], gold: [20, 45], xp: 22,
 var PHOENIX_DEF = { name: "Phoenix", hp: 20, dmg: [3, 10], gold: [15, 30], xp: 18 };
 var FIRE_BOW = { name: "Fire Bow", dmgBonus: 8, emoji: "🏹", ranged: true, range: 7 };
 var seenAnyVolcano = false; // tracks whether the guaranteed first Phoenix has already happened
-// Sea Serpents are the only wandering monster that can enter/patrol water —
-// everything else is land-bound and will never chase you out onto the ocean.
+// Sea Serpents, Krakens, and Mermen are the only wandering monsters that
+// can enter/patrol water — everything else is land-bound and will never
+// chase you out onto the ocean.
 var SEA_SERPENT_DEF = { name: "Sea Serpent", hp: 16, dmg: [2, 8], gold: [5, 15], xp: 9, aquatic: true };
+// Mermen lurk just under the surface — a bit tougher than a Sea Serpent,
+// nowhere near as dangerous as a Kraken.
+var MERMAN_DEF = { name: "Merman", hp: 20, dmg: [3, 9], gold: [8, 20], xp: 12, aquatic: true };
 // Pirates only appear via the dedicated water encounter (not the general
 // wandering-monster pool) — winning grants a ship.
 var PIRATE_DEF = { name: "Pirate", hp: 14, dmg: [2, 7], gold: [10, 25], xp: 10 };
@@ -1893,9 +1898,11 @@ var MONSTER_EMOJI = {
   "Wolf": "🐺",
   "Giant Eagle": "🦅",
   "Monkey": "🐒",
-  "Yeti": "🫈"
-  // Guard and Wild Horse are NOT in this map — they use their own drawn
-  // pixel-art sprites (drawGuard/existing horse art), not emoji.
+  "Yeti": "🫈",
+  "Phoenix": "🐦‍🔥",
+  "Merman": "🧜🏽‍♂️"
+  // Guard, Elite Guard, Wild Horse, and Archwizard are NOT in this map —
+  // they use their own drawn pixel-art sprites, not emoji (see drawMonster).
 };
 
 // Standalone horse silhouette (no rider, no assumed background) — the
@@ -1938,7 +1945,19 @@ function drawRocketSprite(sx, sy, size) {
 
 function drawMonster(cx, cy, tileSize, name, flashAlpha) {
   if (name === "Guard") { drawHuman(cx, cy, tileSize, "#1a2a6a", "S"); } // dark blue uniform
+  else if (name === "Elite Guard") {
+    drawHuman(cx, cy, tileSize, "#2a3a9a", "S"); // brighter blue — a cut above a regular guard
+    px(cx - tileSize * 0.08, cy - tileSize * 0.4, tileSize * 0.16, tileSize * 0.07, PAL.gold); // gold trim
+  }
   else if (name === "Wild Horse") { drawHorseSprite(cx - tileSize / 2, cy - tileSize / 2, tileSize); }
+  else if (name === "Archwizard") {
+    // same magenta robed figure + glow ring as his dungeon-level-8 tile,
+    // so he reads as the same boss once the fight actually starts
+    drawHuman(cx, cy, tileSize, "#cc33cc", "S");
+    ctx.strokeStyle = "#ff66ff";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, tileSize * 0.42, 0, Math.PI * 2); ctx.stroke();
+  }
   else {
     var glyph = MONSTER_EMOJI[name] || "👹";
     ctx.save();
@@ -2336,6 +2355,7 @@ function renderAll() {
   if (townScreen) renderTownScreenOverlay();
   if (characterSheetIndex !== null) renderCharacterSheetOverlay();
   if (equipPickerFor) renderEquipPickerOverlay();
+  if (potionPickerFor !== null) renderPotionPickerOverlay();
   if (menuScreen) renderMenuOverlay();
   if (actionChoices) renderActionChoiceOverlay();
 
@@ -2576,7 +2596,7 @@ function renderTownScreenOverlay() {
     ctx.fillStyle = PAL.white;
     ctx.fillText("Give a gift to be healed:", 36, y); y += 20;
     ctx.fillText("Gold (" + Math.min(sharedGold, 20) + "g)  [tap G]", 36, y); y += 18;
-    ctx.fillText("Potion (have " + potionCount + ")  [tap P]", 36, y); y += 18;
+    ctx.fillText("Potion (have " + inventory.filter(function (e) { return e.category === "potion"; }).length + ")  [tap P]", 36, y); y += 18;
     if (party[0].equippedWeapon) {
       ctx.fillText("Your " + party[0].equippedWeapon.name + "  [tap W]", 36, y); y += 18;
     }
@@ -2635,6 +2655,16 @@ function renderCharacterSheetOverlay() {
   ctx.fillText("[EQUIP]", LW - 42 - 60, y);
   y += 26;
 
+  var potionRowY = y;
+  var potionTally = inventory.filter(function (e) { return e.category === "potion"; }).length;
+  ctx.fillStyle = PAL.white;
+  ctx.fillText("Potions: " + potionTally, 36, y);
+  if (p.alive) {
+    ctx.fillStyle = PAL.waterLight;
+    ctx.fillText("[DRINK]", LW - 42 - 60, y);
+  }
+  y += 26;
+
   ctx.fillStyle = PAL.yellow;
   ctx.fillText("Spells", 36, y); y += 18;
   var spells = SPELLS[p.cls] || [];
@@ -2649,10 +2679,10 @@ function renderCharacterSheetOverlay() {
   }
 }
 
-// Fixed y-baselines for the Weapon/Armor rows above — kept in one place
-// so the tap handler's hit-test always matches what's actually drawn.
+// Fixed y-baselines for the Weapon/Armor/Potions rows above — kept in
+// one place so the tap handler's hit-test always matches what's drawn.
 function characterSheetEquipRowY() {
-  return { weapon: 219, armor: 237 };
+  return { weapon: 219, armor: 237, potion: 263 };
 }
 
 function handleCharacterSheetTap(lx, ly) {
@@ -2661,6 +2691,9 @@ function handleCharacterSheetTap(lx, ly) {
   var rows = characterSheetEquipRowY();
   if (ly >= rows.weapon - 12 && ly < rows.weapon + 6) { equipPickerFor = { idx: characterSheetIndex, category: "weapon" }; renderAll(); return; }
   if (ly >= rows.armor - 12 && ly < rows.armor + 6) { equipPickerFor = { idx: characterSheetIndex, category: "armor" }; renderAll(); return; }
+  if (ly >= rows.potion - 12 && ly < rows.potion + 6 && party[characterSheetIndex].alive) {
+    potionPickerFor = characterSheetIndex; renderAll(); return;
+  }
 }
 
 // ============================================================
@@ -2719,6 +2752,56 @@ function handleEquipPickerTap(lx, ly) {
   var items = inventory.filter(function (e) { return e.category === cat; });
   for (var i = 0; i < items.length; i++) {
     if (ly >= y - 12 && ly < y + 6) { equipItemFromInventory(equipPickerFor.idx, items[i]); return; }
+    y += 18;
+  }
+}
+
+// ============================================================
+// POTION PICKER — drills down from the character sheet: pick a potion
+// out of the shared inventory to drink (that character is the one who
+// gets healed). Same popup geometry as the equip picker, just simpler
+// — nothing to unequip, and it shows heal amount instead of a bonus.
+// ============================================================
+function renderPotionPickerOverlay() {
+  var p = party[potionPickerFor];
+  if (!p) { potionPickerFor = null; return; }
+
+  px(30, 140, LW - 60, LH - 280, "#0a0a0a");
+  ctx.strokeStyle = PAL.purple;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(31, 141, LW - 62, LH - 282);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = PAL.white;
+  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.fillText("DRINK POTION — " + p.name, LW / 2, 165);
+  ctx.textAlign = "left";
+  ctx.font = "12px 'Courier New', monospace";
+
+  drawCloseX(equipCloseXRect());
+
+  var y = 190;
+  ctx.fillStyle = PAL.gray;
+  ctx.fillText("HP " + Math.max(0, p.hp) + "/" + p.maxHp, 44, y); y += 20;
+  var items = inventory.filter(function (e) { return e.category === "potion"; });
+  if (items.length === 0) {
+    ctx.fillStyle = PAL.gray;
+    ctx.fillText("No potions in inventory.", 44, y); y += 18;
+  } else {
+    ctx.fillStyle = PAL.white;
+    items.forEach(function (e) {
+      ctx.fillText(e.item.name + " (heals " + e.item.heal + ")", 44, y); y += 18;
+    });
+  }
+}
+
+function handlePotionPickerTap(lx, ly) {
+  var xr = equipCloseXRect();
+  if (inRect(lx, ly, xr)) { potionPickerFor = null; renderAll(); return; }
+  var y = 210; // past the HP line
+  var items = inventory.filter(function (e) { return e.category === "potion"; });
+  for (var i = 0; i < items.length; i++) {
+    if (ly >= y - 12 && ly < y + 6) { drinkPotion(potionPickerFor, items[i]); return; }
     y += 18;
   }
 }
@@ -2900,7 +2983,7 @@ function startCombatWithMonster(mapMonster, screenKey) {
 var SPECIAL_MONSTER_DEFS = [
   SEA_SERPENT_DEF, PIRATE_DEF, GUARD_DEF, WILD_HORSE_DEF, WIZARD_DEF,
   BAT_DEF, GIANT_WASP_DEF, GIANT_EAGLE_DEF, MONKEY_DEF, YETI_DEF, KRAKEN_DEF, ALIEN_DEF,
-  PHOENIX_DEF, ELITE_GUARD_DEF, ARCHWIZARD_DEF
+  PHOENIX_DEF, ELITE_GUARD_DEF, ARCHWIZARD_DEF, MERMAN_DEF
 ];
 function findMonsterDef(name) {
   for (var i = 0; i < MONSTER_DEFS.length; i++) {
@@ -3783,10 +3866,7 @@ function pickUpGroundItem() {
     var g = 5 + Math.floor(Math.random() * 20);
     sharedGold += g;
     pushLog("Found " + g + " gold!");
-  } else if (here.category === "potion") {
-    potionCount += 1;
-    pushLog("Got " + here.item.name + "!");
-  } else if (here.category === "weapon" || here.category === "armor") {
+  } else if (here.category === "potion" || here.category === "weapon" || here.category === "armor") {
     addToInventory(here.category, here.item);
   }
   removeGroundItem(here);
@@ -3931,7 +4011,7 @@ function readSlot(n) {
 
 function gatherSaveData() {
   return {
-    party: party, sharedGold: sharedGold, potionCount: potionCount, inventory: inventory,
+    party: party, sharedGold: sharedGold, inventory: inventory,
     state: state, ship: ship, horse: horse, car: car, helicopter: helicopter, rocket: rocket,
     tavernRecruit: tavernRecruit, monsterKillCounts: monsterKillCounts, wind: wind,
     alienEncountersWon: alienEncountersWon, alienQuestComplete: alienQuestComplete,
@@ -3942,8 +4022,15 @@ function gatherSaveData() {
 function applySaveData(d) {
   party = d.party;
   sharedGold = d.sharedGold;
-  potionCount = d.potionCount;
   inventory = d.inventory || [];
+  // Old saves (from before potions moved into the shared inventory)
+  // carry a flat potionCount instead of potion entries — convert it so
+  // those potions aren't just lost.
+  if (d.potionCount) {
+    for (var pc = 0; pc < d.potionCount; pc++) {
+      inventory.push({ category: "potion", item: { name: "Potion", heal: 20 } });
+    }
+  }
   state = d.state;
   ship = d.ship; horse = d.horse; car = d.car; helicopter = d.helicopter; rocket = d.rocket;
   tavernRecruit = d.tavernRecruit || null;
@@ -4166,14 +4253,17 @@ function confirmRunNo() {
 var townScreen = null; // null | "shop" | "tavern" | "fountain"
 var characterSheetIndex = null; // null | index into party[] — set to open the character sheet overlay
 var equipPickerFor = null; // null | { idx, category: "weapon"|"armor" } — drills down from the character sheet
+var potionPickerFor = null; // null | idx into party[] — drills down from the character sheet, picks a potion to drink
 var menuScreen = null; // null | "main" — the save/load menu opened from the MENU button
 var actionChoices = null; // null | [{ label, fn }] — the small popup the ACTION button shows when more than one thing is possible here
 var tavernRecruit = null;
 
-// Shared party inventory — weapons/armor go here on pickup or purchase
-// instead of auto-equipping the leader; any character can equip them
-// from their own character sheet.
-var inventory = []; // [{ category: "weapon"|"armor", item }]
+// Shared party inventory — weapons/armor/potions go here on pickup or
+// purchase instead of auto-equipping/auto-using; any character can equip
+// gear or drink a potion from their own character sheet.
+var inventory = []; // [{ category: "weapon"|"armor"|"potion", item }]
+inventory.push({ category: "potion", item: { name: "Potion", heal: 20 } });
+inventory.push({ category: "potion", item: { name: "Potion", heal: 20 } });
 
 var RACES = ["Human", "Elf", "Dwarf", "Halfling", "Gnome"];
 var CLASSES = [
@@ -4385,8 +4475,9 @@ function giveHutGift(kind, itemOrIdx) {
     sharedGold -= amt;
     pushLog("You give " + amt + " gold.");
     gaveSomething = true;
-  } else if (kind === "potion" && potionCount > 0) {
-    potionCount -= 1;
+  } else if (kind === "potion" && inventory.some(function (e) { return e.category === "potion"; })) {
+    var potionIdx = inventory.findIndex(function (e) { return e.category === "potion"; });
+    inventory.splice(potionIdx, 1);
     pushLog("You give a potion.");
     gaveSomething = true;
   } else if (kind === "weapon" && party[0].equippedWeapon) {
@@ -4421,12 +4512,7 @@ function closeTownScreen() {
 function buyItem(category, item, price) {
   if (sharedGold < price) { pushLog("Not enough gold"); renderAll(); return; }
   sharedGold -= price;
-  if (category === "potion") {
-    potionCount += 1;
-    pushLog("Bought " + item.name);
-  } else if (category === "weapon" || category === "armor") {
-    addToInventory(category, item);
-  }
+  addToInventory(category, item);
   renderAll();
 }
 
@@ -4437,7 +4523,7 @@ function buyItem(category, item, price) {
 // ============================================================
 function addToInventory(category, item) {
   inventory.push({ category: category, item: item });
-  pushLog(item.name + " added to inventory. Equip it from a character's sheet.");
+  pushLog(item.name + " added to inventory. " + (category === "potion" ? "Drink" : "Equip") + " it from a character's sheet.");
 }
 
 function equipItemFromInventory(idx, entry) {
@@ -4466,6 +4552,21 @@ function unequipItem(idx, cat) {
     pushLog(p.name + " unequips " + p.equippedArmor.name + ".");
     p.equippedArmor = null; p.armorBonus = 0;
   }
+  renderAll();
+}
+
+// Drinking a potion works from any character's own sheet — that
+// character is the one who drinks it and gets healed, whether in or
+// out of combat (the character sheet is reachable in both).
+function drinkPotion(idx, entry) {
+  var p = party[idx];
+  if (!p.alive) { potionPickerFor = null; renderAll(); return; }
+  var i = inventory.indexOf(entry);
+  if (i !== -1) inventory.splice(i, 1);
+  var healed = Math.min(entry.item.heal, p.maxHp - p.hp);
+  p.hp = Math.min(p.maxHp, p.hp + entry.item.heal);
+  pushLog(p.name + " drinks a " + entry.item.name + " and recovers " + healed + " HP.");
+  potionPickerFor = null;
   renderAll();
 }
 
@@ -4566,6 +4667,7 @@ canvas.addEventListener("click", function (e) {
 
   if (confirmingRun) { handleRunConfirmTap(lx, ly); return; }
   if (equipPickerFor) { handleEquipPickerTap(lx, ly); return; }
+  if (potionPickerFor !== null) { handlePotionPickerTap(lx, ly); return; }
   if (characterSheetIndex !== null) { handleCharacterSheetTap(lx, ly); return; }
   if (menuScreen) { handleMenuTap(lx, ly); return; }
   if (actionChoices) { handleActionChoiceTap(lx, ly); return; }
