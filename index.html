@@ -848,6 +848,13 @@ var ROBOT_PARTS = {
   arm: { emoji: "🦾", giftKind: "weapon", label: "a mechanical arm" },
   leg: { emoji: "🦿", giftKind: "armor", label: "a mechanical leg" }
 };
+// ---------- the gear hut's fetch quest: a potion earns you a shovel and
+// a tip about the jester's grave, not the gear itself. Dig there for the
+// stranger's lost teddy bear, then trade it back for the gear. ----------
+var hasShovel = false;
+var hasTeddyBear = false;
+// one of buildTown()'s graveSpots, re-flavored as the jester's grave
+var JESTER_GRAVE_POS = { x: 34, y: 9 };
 
 // ---------- the Moon King's "future man" quest: once the alien quest is
 // done, he explains he built a companion — a man of the future — and
@@ -1093,6 +1100,22 @@ function roamingNpcAdjacent() {
     if (found) return found;
   }
   return null;
+}
+
+function isAdjacentToJesterGrave() {
+  if (state.mode !== "town") return false;
+  var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0], [0, 0]];
+  for (var i = 0; i < dirs.length; i++) {
+    if (state.x + dirs[i][0] === JESTER_GRAVE_POS.x && state.y + dirs[i][1] === JESTER_GRAVE_POS.y) return true;
+  }
+  return false;
+}
+function digJesterGrave() {
+  if (hasTeddyBear) { pushLog("You've already dug up what was buried here."); renderAll(); return; }
+  hasTeddyBear = true;
+  pushLog("You dig into the soft earth...");
+  pushLog("You found a small, dusty teddy bear! 🧸");
+  renderAll();
 }
 
 // Called once, after every town grid has been built, to populate the
@@ -1645,7 +1668,8 @@ function activeQuestLine() {
       ? "Quest: Bring " + DOG_NAME + " back to the boy in Bramble"
       : "Quest: Find the boy's lost dog, " + DOG_NAME;
   }
-  if (gearQuestActivated && !hasGearPart) return "Quest: Collect the gear " + ROBOT_PARTS.gear.emoji + " left for you";
+  if (gearQuestActivated && !hasGearPart && !hasTeddyBear) return "Quest: Dig up the teddy bear 🧸 by the jester's grave";
+  if (hasTeddyBear && !hasGearPart) return "Quest: Return the teddy bear 🧸 to the gear hut";
   if (armQuestActivated && !hasArmPart) return "Quest: Collect the arm " + ROBOT_PARTS.arm.emoji + " left for you";
   if (legQuestActivated && !hasLegPart) return "Quest: Collect the leg " + ROBOT_PARTS.leg.emoji + " left for you";
   if (hasGearPart && hasArmPart && hasLegPart && !futureManComplete) return "Quest: Bring the robot parts to the Moon King";
@@ -2387,9 +2411,9 @@ function renderMap() {
         // the dog sits here in plain sight regardless of quest state — the
         // visible tell that this hut's stranger is worth a gift. A robot
         // part, on the other hand, only appears once its own hut quest
-        // has been activated by the right gift.
+        // has been activated by the right gift. The gear hut is the
+        // exception — its "part" is a fetch quest, not a room pickup.
         if (state.inDogHut && !hasRescuedDog) glyph = "🐕";
-        else if (state.inGearHut && gearQuestActivated && !hasGearPart) glyph = ROBOT_PARTS.gear.emoji;
         else if (state.inArmHut && armQuestActivated && !hasArmPart) glyph = ROBOT_PARTS.arm.emoji;
         else if (state.inLegHut && legQuestActivated && !hasLegPart) glyph = ROBOT_PARTS.leg.emoji;
       }
@@ -2799,14 +2823,20 @@ function renderTownScreenOverlay() {
     }
   } else if (townScreen === "hutGift") {
     ctx.fillStyle = PAL.white;
-    ctx.fillText("Give a gift to be healed:", 36, y); y += 20;
-    ctx.fillText("Gold (" + Math.min(sharedGold, 20) + "g)  [tap G]", 36, y); y += 18;
-    ctx.fillText("Potion (have " + inventory.filter(function (e) { return e.category === "potion"; }).length + ")  [tap P]", 36, y); y += 18;
-    if (party[0].equippedWeapon) {
-      ctx.fillText("Your " + party[0].equippedWeapon.name + "  [tap W]", 36, y); y += 18;
-    }
-    if (party[0].armorBonus > 0) {
-      ctx.fillText("Your armor  [tap A]", 36, y); y += 18;
+    if (state.inGearHut && hasTeddyBear && !hasGearPart) {
+      ctx.fillText("Give back the teddy bear:", 36, y); y += 20;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Teddy Bear 🧸  [tap T]", 36, y); y += 18;
+    } else {
+      ctx.fillText("Give a gift to be healed:", 36, y); y += 20;
+      ctx.fillText("Gold (" + Math.min(sharedGold, 20) + "g)  [tap G]", 36, y); y += 18;
+      ctx.fillText("Potion (have " + inventory.filter(function (e) { return e.category === "potion"; }).length + ")  [tap P]", 36, y); y += 18;
+      if (party[0].equippedWeapon) {
+        ctx.fillText("Your " + party[0].equippedWeapon.name + "  [tap W]", 36, y); y += 18;
+      }
+      if (party[0].armorBonus > 0) {
+        ctx.fillText("Your armor  [tap A]", 36, y); y += 18;
+      }
     }
   } else if (townScreen === "questBoy") {
     ctx.fillStyle = PAL.white;
@@ -3921,7 +3951,6 @@ function move(dx, dy) {
       renderAll();
       return;
     }
-    if (state.inGearHut && gearQuestActivated && !hasGearPart) { collectRobotPart("gear"); return; }
     if (state.inArmHut && armQuestActivated && !hasArmPart) { collectRobotPart("arm"); return; }
     if (state.inLegHut && legQuestActivated && !hasLegPart) { collectRobotPart("leg"); return; }
   }
@@ -3952,7 +3981,24 @@ function move(dx, dy) {
   if (t === T.GARDEN_FOUNTAIN) { drinkGardenFountain(); return; }
   if (t === T.MOAI) { pushLog("An ancient moai gazes back at you, weathered and silent."); renderAll(); return; }
   if (t === T.SHRINE) { pushLog("A small shrine. You bow your head for a moment of quiet."); renderAll(); return; }
-  if (t === T.GRAVE) { pushLog("A worn headstone. You can't make out the name."); renderAll(); return; }
+  if (t === T.GRAVE) {
+    if (nx === JESTER_GRAVE_POS.x && ny === JESTER_GRAVE_POS.y) {
+      if (hasTeddyBear) {
+        pushLog("The jester's grave. The soil here has been freshly turned.");
+      } else if (hasShovel) {
+        pushLog("A cracked headstone: \"HERE LIES THE ROYAL JESTER —");
+        pushLog("HE WHO LAUGHED LAST.\" The ground looks freshly disturbed.");
+        pushLog("(Dig here with ACTION.)");
+      } else {
+        pushLog("A cracked headstone: \"HERE LIES THE ROYAL JESTER —");
+        pushLog("HE WHO LAUGHED LAST.\"");
+      }
+    } else {
+      pushLog("A worn headstone. You can't make out the name.");
+    }
+    renderAll();
+    return;
+  }
   if (t === T.ROBOT_KING) { openRobotKing(); return; }
   if (t === T.CYBER_DISC) { pushLog("A shattered optical disc glints in the light."); renderAll(); return; }
   if (t === T.CYBER_PHONE) { pushLog("An old touchscreen phone, its battery long dead."); renderAll(); return; }
@@ -4165,6 +4211,9 @@ function cmdAction() {
       : "Talk to the weaponsmith";
     choices.push({ label: npcLabel, fn: function () { talkToNpc(npc); } });
   }
+  if (isAdjacentToJesterGrave() && hasShovel && !hasTeddyBear) {
+    choices.push({ label: "Dig at the grave", fn: digJesterGrave });
+  }
   var here = groundItemAt(state.mode, state.x, state.y);
   if (here) {
     var itemLabel = here.kind === "gold" ? "Open chest" : "Get " + here.item.name;
@@ -4295,6 +4344,7 @@ function gatherSaveData() {
     hasWizardsWand: hasWizardsWand, wizardQuestComplete: wizardQuestComplete,
     dogQuestStarted: dogQuestStarted, dogQuestComplete: dogQuestComplete, hasRescuedDog: hasRescuedDog,
     gearQuestActivated: gearQuestActivated, hasGearPart: hasGearPart,
+    hasShovel: hasShovel, hasTeddyBear: hasTeddyBear,
     armQuestActivated: armQuestActivated, hasArmPart: hasArmPart,
     legQuestActivated: legQuestActivated, hasLegPart: hasLegPart,
     futureManComplete: futureManComplete, hasCyberRocket: hasCyberRocket,
@@ -4328,6 +4378,8 @@ function applySaveData(d) {
   hasRescuedDog = !!d.hasRescuedDog;
   gearQuestActivated = !!d.gearQuestActivated;
   hasGearPart = !!d.hasGearPart;
+  hasShovel = !!d.hasShovel;
+  hasTeddyBear = !!d.hasTeddyBear;
   armQuestActivated = !!d.armQuestActivated;
   hasArmPart = !!d.hasArmPart;
   legQuestActivated = !!d.legQuestActivated;
@@ -4814,10 +4866,26 @@ function openHealer() {
 function openHutGift() {
   townScreen = "hutGift";
   pushLog("-----A Kindly Stranger-----");
-  pushLog("\"Times are hard. A gift, and I'll tend your wounds.\"");
+  if (state.inGearHut && hasTeddyBear && !hasGearPart) {
+    pushLog("\"Is that... my teddy bear?! You found him!\"");
+  } else if (state.inGearHut && gearQuestActivated && !hasTeddyBear) {
+    pushLog("\"Please, bring back my teddy bear from the jester's grave.\"");
+  } else {
+    pushLog("\"Times are hard. A gift, and I'll tend your wounds.\"");
+  }
   renderAll();
 }
 function giveHutGift(kind, itemOrIdx) {
+  if (kind === "teddyBear") {
+    if (!hasTeddyBear || hasGearPart) { pushLog("You have nothing like that to give."); renderAll(); return; }
+    hasTeddyBear = false;
+    hasGearPart = true;
+    pushLog("\"My teddy bear! Oh, thank you!\" They press a gear into your hand.");
+    pushLog("Received a gear " + ROBOT_PARTS.gear.emoji + "!");
+    townScreen = null;
+    renderAll();
+    return;
+  }
   var gaveSomething = false;
   if (kind === "gold" && sharedGold > 0) {
     var amt = Math.min(sharedGold, 20);
@@ -4866,8 +4934,11 @@ function activateRobotHutQuest(kind) {
   if (state.inGearHut && !gearQuestActivated) {
     if (kind === ROBOT_PARTS.gear.giftKind) {
       gearQuestActivated = true;
-      pushLog("\"Ah, a potion — just the thing.\" They rummage about.");
-      pushLog("\"There's a gear in the back room, if you want it.\"");
+      hasShovel = true;
+      pushLog("\"Ah, a potion — bless you.\" They fall quiet a moment.");
+      pushLog("\"...Actually, one more kindness? My teddy bear is");
+      pushLog("buried by the jester's grave in Bramble's graveyard.");
+      pushLog("Take this shovel and dig him up for me?\"");
     } else {
       pushLog("\"Kind of you, but... it's a potion I could really use.\"");
     }
@@ -4892,8 +4963,7 @@ function activateRobotHutQuest(kind) {
 // Called when bumping into the visible part at HUT_PROP_TILE, once its
 // hut's quest has been activated (see activateRobotHutQuest).
 function collectRobotPart(kind) {
-  if (kind === "gear") hasGearPart = true;
-  else if (kind === "arm") hasArmPart = true;
+  if (kind === "arm") hasArmPart = true;
   else if (kind === "leg") hasLegPart = true;
   pushLog("You pick up " + ROBOT_PARTS[kind].label + " " + ROBOT_PARTS[kind].emoji + ".");
   renderAll();
@@ -5168,17 +5238,22 @@ function handleTownTap(lx, ly) {
       }
     }
   } else if (townScreen === "hutGift") {
-    var gy2 = 115 + 20; // "Give a gift" line, then Gold, Potion, [Weapon], [Armor]
-    if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("gold"); return; }
-    gy2 += 18;
-    if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("potion"); return; }
-    gy2 += 18;
-    if (party[0].equippedWeapon) {
-      if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("weapon"); return; }
+    if (state.inGearHut && hasTeddyBear && !hasGearPart) {
+      var ty = 115 + 20; // "Give back the teddy bear:" line, then the trade row
+      if (ly >= ty - 12 && ly < ty + 6) { giveHutGift("teddyBear"); return; }
+    } else {
+      var gy2 = 115 + 20; // "Give a gift" line, then Gold, Potion, [Weapon], [Armor]
+      if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("gold"); return; }
       gy2 += 18;
-    }
-    if (party[0].armorBonus > 0) {
-      if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("armor"); return; }
+      if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("potion"); return; }
+      gy2 += 18;
+      if (party[0].equippedWeapon) {
+        if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("weapon"); return; }
+        gy2 += 18;
+      }
+      if (party[0].armorBonus > 0) {
+        if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("armor"); return; }
+      }
     }
   } else if (townScreen === "questBoy") {
     // "Hand over the dog [tap H]" only appears (and is only tappable)
