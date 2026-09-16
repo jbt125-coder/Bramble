@@ -681,7 +681,6 @@ placeIslandEntry();
 // ---------- the moon world, reached only through the hidden portal ----------
 var MOON_W = 30, MOON_H = 24;
 var ROCKET_MOON_PAD = null; // fixed {x,y} near the moon castle, set below once buildMoonWorld() runs
-var CYBER_ROCKET_MOON_PAD = null; // ditto, for the Moon King's own rocket to Cyber World
 function buildMoonWorld() {
   // mostly mountains and grey grass, deliberately no trees at all —
   // a barren, alien landscape
@@ -704,15 +703,11 @@ function buildMoonWorld() {
   g[midR][midC] = T.TOWN;
   // the return portal sits right where the player first arrives
   g[midR + 2][midC] = T.MOON_PORTAL;
-  // fixed rocket landing pad, right next to the moon's castle/town —
-  // this exact spot is where a flown-in rocket always parks, and the
-  // only place on the moon you can board one to fly home
+  // fixed rocket landing pad, right next to the moon's castle/town — this
+  // exact spot is where the Moon King's rocket always parks, and the only
+  // place on the moon you can board it to fly to Cyber World
   ROCKET_MOON_PAD = { x: midC + 2, y: midR };
   if (g[ROCKET_MOON_PAD.y][ROCKET_MOON_PAD.x] === T.MOUNTAIN) g[ROCKET_MOON_PAD.y][ROCKET_MOON_PAD.x] = T.MOON_GRASS;
-  // a separate pad for the Moon King's own rocket, once he's given it to
-  // you — kept clear on the opposite side of town from the Earth rocket
-  CYBER_ROCKET_MOON_PAD = { x: midC - 2, y: midR };
-  if (g[CYBER_ROCKET_MOON_PAD.y][CYBER_ROCKET_MOON_PAD.x] === T.MOUNTAIN) g[CYBER_ROCKET_MOON_PAD.y][CYBER_ROCKET_MOON_PAD.x] = T.MOON_GRASS;
   placeOneHut(g, rand, T.MOON_GRASS, MOON_W, MOON_H, midR, midC, 6);
   placeVolcanoes(g, rand, MOON_W, MOON_H, 2);
   return g;
@@ -860,11 +855,9 @@ var ROBOT_PARTS = {
 // found in Earth's huts are what's left of him; bring all 3 back and
 // the Moon King rebuilds him, rewarding a rocket to Cyber World. ----------
 var futureManComplete = false;
+// true once the Moon King has granted `rocket` (see turnInRobotParts) —
+// there's only ever the one rocket, which then flies moon <-> Cyber World
 var hasCyberRocket = false;
-// The rocket that flies between the moon and Cyber World — separate
-// vehicle from the Earth<->moon rocket, granted the moment the future
-// man is rebuilt (see turnInRobotParts).
-var cyberRocket = { owned: false, screen: null, x: 0, y: 0 };
 // The Robot King's one-time gift once you first reach Cyber World —
 // zombies (sent by the vengeful aliens) have overrun his world, and his
 // people can't bring themselves to fight, so he arms the party instead.
@@ -1032,16 +1025,12 @@ var horse = {
 var car = { owned: false, screen: null, x: 0, y: 0 };
 var helicopter = { owned: false, screen: null, x: 0, y: 0 };
 
-// The rocket: flies you to the moon world. Unlike the horse/car, it
-// can't be "dismounted" freely wherever you like — it must always stay
-// parked right next to the moon castle, or you could get stranded there
-// with no way back. Buying one places it on the overworld near wherever
-// you bought it; flying to the moon re-parks it at the fixed moon-side
-// pad; flying back re-parks it at the original overworld pad.
+// The rocket: granted by the Moon King once the future man is rebuilt
+// (see turnInRobotParts), it flies between the moon and Cyber World.
+// Unlike the horse/car, it can't be "dismounted" freely wherever you
+// like — it always stays parked at one of the two fixed pads (see
+// ROCKET_MOON_PAD and CYBER_LANDING_PAD), so you can never be stranded.
 var rocket = { owned: false, screen: null, x: 0, y: 0 };
-// (ROCKET_MOON_PAD is declared up near the other world constants, right
-// before buildMoonWorld() runs — see below — so it's already set by the
-// time this file reaches this point.)
 
 // Only one land vehicle can be ridden at a time. state.vehicleType is
 // null | "horse" | "car" | "helicopter" — state.mounted stays true
@@ -2333,9 +2322,6 @@ function renderMap() {
         drawShipSprite(sx, sy, TILE);
       }
       if (rocket.owned && rocket.screen === state.mode && rocket.x === gx && rocket.y === gy) {
-        drawRocketSprite(sx, sy, TILE);
-      }
-      if (cyberRocket.owned && cyberRocket.screen === state.mode && cyberRocket.x === gx && cyberRocket.y === gy) {
         drawRocketSprite(sx, sy, TILE);
       }
 
@@ -4014,41 +4000,21 @@ function move(dx, dy) {
     renderAll();
     return;
   }
-  // Boarding the parked rocket: flies to the moon (if boarded on the
-  // overworld) or flies home (if boarded at the fixed moon pad) —
-  // instant travel, no direction/movement involved like the ship.
+  // Boarding the parked rocket: flies between the moon and Cyber World —
+  // instant travel, no direction/movement involved like the ship. There's
+  // only ever the one rocket, granted by the Moon King (see turnInRobotParts).
   if (rocket.owned && rocket.screen === state.mode && rocket.x === nx && rocket.y === ny) {
-    if (state.mode === "moon") {
-      state.mode = "overworld";
-      state.x = rocket.overworldX; state.y = rocket.overworldY;
-      rocket.screen = "overworld";
-      rocket.x = rocket.overworldX; rocket.y = rocket.overworldY;
-      pushLog("The rocket carries you home to the overworld.");
-    } else {
-      rocket.overworldX = rocket.x; rocket.overworldY = rocket.y; // remember where to return to
+    if (state.mode === "cyber") {
       state.mode = "moon";
       state.x = ROCKET_MOON_PAD.x; state.y = ROCKET_MOON_PAD.y;
       rocket.screen = "moon";
       rocket.x = ROCKET_MOON_PAD.x; rocket.y = ROCKET_MOON_PAD.y;
-      pushLog("The rocket blasts off for the moon!");
-    }
-    renderAll();
-    return;
-  }
-  // Boarding the Moon King's rocket: flies between the moon and Cyber
-  // World — a separate vehicle and route from the Earth<->moon rocket.
-  if (cyberRocket.owned && cyberRocket.screen === state.mode && cyberRocket.x === nx && cyberRocket.y === ny) {
-    if (state.mode === "cyber") {
-      state.mode = "moon";
-      state.x = CYBER_ROCKET_MOON_PAD.x; state.y = CYBER_ROCKET_MOON_PAD.y;
-      cyberRocket.screen = "moon";
-      cyberRocket.x = CYBER_ROCKET_MOON_PAD.x; cyberRocket.y = CYBER_ROCKET_MOON_PAD.y;
       pushLog("The rocket carries you back to the moon.");
     } else {
       state.mode = "cyber";
       state.x = CYBER_LANDING_PAD.x; state.y = CYBER_LANDING_PAD.y;
-      cyberRocket.screen = "cyber";
-      cyberRocket.x = CYBER_LANDING_PAD.x; cyberRocket.y = CYBER_LANDING_PAD.y;
+      rocket.screen = "cyber";
+      rocket.x = CYBER_LANDING_PAD.x; rocket.y = CYBER_LANDING_PAD.y;
       pushLog("The rocket blasts off for Cyber World!");
     }
     renderAll();
@@ -4324,7 +4290,6 @@ function gatherSaveData() {
   return {
     party: party, sharedGold: sharedGold, inventory: inventory,
     state: state, ship: ship, horse: horse, car: car, helicopter: helicopter, rocket: rocket,
-    cyberRocket: cyberRocket,
     tavernRecruit: tavernRecruit, monsterKillCounts: monsterKillCounts, wind: wind,
     alienEncountersWon: alienEncountersWon, alienQuestComplete: alienQuestComplete,
     hasWizardsWand: hasWizardsWand, wizardQuestComplete: wizardQuestComplete,
@@ -4351,7 +4316,6 @@ function applySaveData(d) {
   }
   state = d.state;
   ship = d.ship; horse = d.horse; car = d.car; helicopter = d.helicopter; rocket = d.rocket;
-  cyberRocket = d.cyberRocket || { owned: false, screen: null, x: 0, y: 0 };
   tavernRecruit = d.tavernRecruit || null;
   monsterKillCounts = d.monsterKillCounts || {};
   wind = d.wind || { dir: "N", movesLeft: 5 };
@@ -4716,15 +4680,15 @@ function openMoonKing() {
   renderAll();
 }
 // Turns in all 3 robot parts for the Moon King's reward — reassembles
-// the future man and grants his own rocket, parked out on the moon's
-// surface (see CYBER_ROCKET_MOON_PAD), to fly to Cyber World.
+// the future man and grants the rocket, parked out on the moon's
+// surface (see ROCKET_MOON_PAD), to fly to Cyber World.
 function turnInRobotParts() {
   if (!(hasGearPart && hasArmPart && hasLegPart) || futureManComplete) return;
   futureManComplete = true;
   hasCyberRocket = true;
-  cyberRocket.owned = true;
-  cyberRocket.screen = "moon";
-  cyberRocket.x = CYBER_ROCKET_MOON_PAD.x; cyberRocket.y = CYBER_ROCKET_MOON_PAD.y;
+  rocket.owned = true;
+  rocket.screen = "moon";
+  rocket.x = ROCKET_MOON_PAD.x; rocket.y = ROCKET_MOON_PAD.y;
   pushLog("-----Quest Complete!-----");
   pushLog("The Moon King assembles the parts before your eyes.");
   pushLog("The man of the future stirs, and speaks:");
