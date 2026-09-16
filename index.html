@@ -160,7 +160,7 @@ var T = {
   STABLE: 21, PORTAL: 22, MOON_GRASS: 23, MOON_SHOP: 24, MOON_PORTAL: 25, ROCKET: 26,
   HUT: 27, MOAI: 28, SHRINE: 29, CHURCH: 30, GARDEN_FOUNTAIN: 31, VOLCANO: 32, ASIA_CASTLE: 33,
   GRAVE: 34, BRIDGE: 35, BED: 36, MOURNER: 37, HUT_NPC: 38,
-  STAIRS_DOWN: 39, STAIRS_UP: 40, BOSS: 41, QUEST_BOY: 42
+  STAIRS_DOWN: 39, STAIRS_UP: 40, BOSS: 41, QUEST_BOY: 42, MOON_KING: 43
 };
 
 function mkMap(w, h, fill) {
@@ -730,6 +730,7 @@ function buildMoonTown() {
   g[h - 1][7] = T.DOOR;
   carveRoom(g, 4, 3, 6, 5, "S", 3);
   g[5][7] = T.MOON_SHOP;
+  g[5][5] = T.MOON_KING;
   return g;
 }
 
@@ -803,6 +804,15 @@ var ROBOT_PARTS = {
   arm: { emoji: "🦾", giftKind: "weapon", label: "a mechanical arm" },
   leg: { emoji: "🦿", giftKind: "armor", label: "a mechanical leg" }
 };
+
+// ---------- the Moon King's "future man" quest: once the alien quest is
+// done, he explains he built a companion — a man of the future — and
+// sent him to Earth, never to hear from him again. The 3 robot parts
+// found in Earth's huts are what's left of him; bring all 3 back and
+// the Moon King rebuilds him, rewarding a rocket to a Cyber World that
+// isn't built yet — this quest only goes as far as granting that reward.
+var futureManComplete = false;
+var hasCyberRocket = false;
 
 // Places the ISLAND marker at a random open-water tile on the main
 // overworld, far enough from the mainland's coastline to feel like a real
@@ -1576,6 +1586,7 @@ function activeQuestLine() {
   if (gearQuestActivated && !hasGearPart) return "Quest: Collect the gear " + ROBOT_PARTS.gear.emoji + " left for you";
   if (armQuestActivated && !hasArmPart) return "Quest: Collect the arm " + ROBOT_PARTS.arm.emoji + " left for you";
   if (legQuestActivated && !hasLegPart) return "Quest: Collect the leg " + ROBOT_PARTS.leg.emoji + " left for you";
+  if (hasGearPart && hasArmPart && hasLegPart && !futureManComplete) return "Quest: Bring the robot parts to the Moon King";
   return null;
 }
 
@@ -1707,6 +1718,12 @@ function drawTile(sx, sy, size, type, gx, gy) {
     // small crown above the head
     ctx.fillStyle = PAL.yellow;
     px(sx + size * 0.42, sy + size * 0.06, size * 0.16, size * 0.08, PAL.yellow);
+  } else if (type === T.MOON_KING) {
+    px(sx, sy, size, size, "#141414");
+    drawHuman(sx + size / 2, sy + size / 2, size, "#88ddff", "S");
+    // same small crown, in a cool lunar tone
+    ctx.fillStyle = "#cde6ff";
+    px(sx + size * 0.42, sy + size * 0.06, size * 0.16, size * 0.08, "#cde6ff");
   } else if (type === T.STABLE) {
     px(sx, sy, size, size, "#141414");
     // simple stable-hand + a horse-head silhouette beside them
@@ -2576,7 +2593,8 @@ function renderTownScreenOverlay() {
     : townScreen === "tavern" ? "TAVERN" : townScreen === "fountain" ? "FOUNTAIN"
     : townScreen === "king" ? "THRONE ROOM" : townScreen === "stable" ? "STABLE"
     : townScreen === "moonshop" ? "LUNAR ARMORY" : townScreen === "hutGift" ? "A KINDLY STRANGER"
-    : townScreen === "questBoy" ? "A BOY BY THE FOUNTAIN" : "HEALER";
+    : townScreen === "questBoy" ? "A BOY BY THE FOUNTAIN"
+    : townScreen === "moonKing" ? "THE MOON KING" : "HEALER";
   ctx.fillText(title, LW / 2, 90);
   ctx.textAlign = "left";
   ctx.font = "12px 'Courier New', monospace";
@@ -2702,6 +2720,24 @@ function renderTownScreenOverlay() {
       ctx.fillText("\"Have you seen my dog, " + DOG_NAME + "?", 36, y); y += 18;
       ctx.fillText("He ran off toward one of the huts.", 36, y); y += 18;
       ctx.fillText("Please, bring him home!\"", 36, y); y += 18;
+    }
+  } else if (townScreen === "moonKing") {
+    ctx.fillStyle = PAL.white;
+    if (!alienQuestComplete) {
+      ctx.fillText("\"Prove yourself against the aliens,", 36, y); y += 18;
+      ctx.fillText("traveler.\"", 36, y); y += 18;
+    } else if (futureManComplete) {
+      ctx.fillText("\"My old friend flies true again,", 36, y); y += 18;
+      ctx.fillText("thanks to you.\"", 36, y); y += 18;
+    } else if (hasGearPart && hasArmPart && hasLegPart) {
+      ctx.fillText("\"You've found all his parts!\"", 36, y); y += 20;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Hand them over  [tap H]", 36, y); y += 18;
+    } else {
+      ctx.fillText("\"Years ago I built a companion —", 36, y); y += 18;
+      ctx.fillText("a man of the future. I sent him to", 36, y); y += 18;
+      ctx.fillText("Earth, and never heard from him again.", 36, y); y += 18;
+      ctx.fillText("If you find any trace of him...\"", 36, y); y += 18;
     }
   }
 }
@@ -3764,6 +3800,7 @@ function move(dx, dy) {
   if (t === T.CHEST) { openVaultChest(nx, ny); return; }
   if (t === T.HUT_NPC) { openHutGift(); return; }
   if (t === T.QUEST_BOY) { openQuestBoy(); return; }
+  if (t === T.MOON_KING) { openMoonKing(); return; }
   if (state.mode === "hutInterior" && nx === HUT_PROP_TILE.x && ny === HUT_PROP_TILE.y) {
     // the dog itself is just a sighting, not something you can grab —
     // give the hut's kindly stranger a gift (see giveHutGift) to earn it
@@ -4136,7 +4173,8 @@ function gatherSaveData() {
     dogQuestStarted: dogQuestStarted, dogQuestComplete: dogQuestComplete, hasRescuedDog: hasRescuedDog,
     gearQuestActivated: gearQuestActivated, hasGearPart: hasGearPart,
     armQuestActivated: armQuestActivated, hasArmPart: hasArmPart,
-    legQuestActivated: legQuestActivated, hasLegPart: hasLegPart
+    legQuestActivated: legQuestActivated, hasLegPart: hasLegPart,
+    futureManComplete: futureManComplete, hasCyberRocket: hasCyberRocket
   };
 }
 
@@ -4170,6 +4208,8 @@ function applySaveData(d) {
   hasArmPart = !!d.hasArmPart;
   legQuestActivated = !!d.legQuestActivated;
   hasLegPart = !!d.hasLegPart;
+  futureManComplete = !!d.futureManComplete;
+  hasCyberRocket = !!d.hasCyberRocket;
   // Old saves (from before the 8-level dungeon rework) have no
   // dungeonLevel at all. Most of the time that's harmless — it just
   // gets set to 1 the next time they walk into the dungeon tile — but a
@@ -4495,6 +4535,35 @@ function turnInWizardsWand() {
   sharedGold += 500;
   pushLog("-----Quest Complete!-----");
   pushLog("The King rewards you with 500 gold!");
+  townScreen = null;
+  renderAll();
+}
+function openMoonKing() {
+  townScreen = "moonKing";
+  pushLog("-----The Moon King-----");
+  if (!alienQuestComplete) {
+    pushLog("\"Prove yourself against the aliens, traveler.\"");
+  } else if (futureManComplete) {
+    pushLog("\"My old friend flies true again, thanks to you.\"");
+  } else if (hasGearPart && hasArmPart && hasLegPart) {
+    pushLog("\"You've found all his parts! Let me put him back together.\"");
+  } else {
+    pushLog("\"Years ago I built a companion — a man of the future.");
+    pushLog("I sent him to Earth on an errand, and never heard");
+    pushLog("from him again. If you find any trace of him...\"");
+  }
+  renderAll();
+}
+// Turns in all 3 robot parts for the Moon King's reward — a rocket to a
+// Cyber World that doesn't exist yet, so this just grants the flag.
+function turnInRobotParts() {
+  if (!(hasGearPart && hasArmPart && hasLegPart) || futureManComplete) return;
+  futureManComplete = true;
+  hasCyberRocket = true;
+  pushLog("-----Quest Complete!-----");
+  pushLog("The Moon King assembles the parts before your eyes.");
+  pushLog("\"He's whole again! Take this — a rocket built for");
+  pushLog("one more voyage, to the Cyber World.\"");
   townScreen = null;
   renderAll();
 }
@@ -4968,6 +5037,14 @@ function handleTownTap(lx, ly) {
     if (hasRescuedDog && !dogQuestComplete) {
       var by = 115 + 22; // past the "Is that... found him!" line to the hand-over row
       if (ly >= by - 12 && ly < by + 6) { turnInDog(); return; }
+    }
+  } else if (townScreen === "moonKing") {
+    // "Hand them over [tap H]" only appears (and is only tappable) once
+    // all 3 robot parts are found and the quest isn't already turned in —
+    // see the matching render branch above for how this y is reached
+    if (alienQuestComplete && !futureManComplete && hasGearPart && hasArmPart && hasLegPart) {
+      var mky = 115 + 20; // past the "found all his parts!" line to the hand-over row
+      if (ly >= mky - 12 && ly < mky + 6) { turnInRobotParts(); return; }
     }
   }
 }
