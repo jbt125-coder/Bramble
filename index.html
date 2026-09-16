@@ -160,7 +160,10 @@ var T = {
   STABLE: 21, PORTAL: 22, MOON_GRASS: 23, MOON_SHOP: 24, MOON_PORTAL: 25, ROCKET: 26,
   HUT: 27, MOAI: 28, SHRINE: 29, CHURCH: 30, GARDEN_FOUNTAIN: 31, VOLCANO: 32, ASIA_CASTLE: 33,
   GRAVE: 34, BRIDGE: 35, BED: 36, MOURNER: 37, HUT_NPC: 38,
-  STAIRS_DOWN: 39, STAIRS_UP: 40, BOSS: 41, QUEST_BOY: 42, MOON_KING: 43
+  STAIRS_DOWN: 39, STAIRS_UP: 40, BOSS: 41, QUEST_BOY: 42, MOON_KING: 43,
+  ROBOT_KING: 44, CYBER_WALL: 45, CYBER_FLOOR: 46,
+  CYBER_DISC: 47, CYBER_PHONE: 48, CYBER_TV: 49, CYBER_ANTENNA: 50, CYBER_PAGER: 51,
+  CYBER_DIAL: 52, CYBER_SLIDER: 53, CYBER_PRINTER: 54, CYBER_CD: 55
 };
 
 function mkMap(w, h, fill) {
@@ -678,6 +681,7 @@ placeIslandEntry();
 // ---------- the moon world, reached only through the hidden portal ----------
 var MOON_W = 30, MOON_H = 24;
 var ROCKET_MOON_PAD = null; // fixed {x,y} near the moon castle, set below once buildMoonWorld() runs
+var CYBER_ROCKET_MOON_PAD = null; // ditto, for the Moon King's own rocket to Cyber World
 function buildMoonWorld() {
   // mostly mountains and grey grass, deliberately no trees at all —
   // a barren, alien landscape
@@ -705,6 +709,10 @@ function buildMoonWorld() {
   // only place on the moon you can board one to fly home
   ROCKET_MOON_PAD = { x: midC + 2, y: midR };
   if (g[ROCKET_MOON_PAD.y][ROCKET_MOON_PAD.x] === T.MOUNTAIN) g[ROCKET_MOON_PAD.y][ROCKET_MOON_PAD.x] = T.MOON_GRASS;
+  // a separate pad for the Moon King's own rocket, once he's given it to
+  // you — kept clear on the opposite side of town from the Earth rocket
+  CYBER_ROCKET_MOON_PAD = { x: midC - 2, y: midR };
+  if (g[CYBER_ROCKET_MOON_PAD.y][CYBER_ROCKET_MOON_PAD.x] === T.MOUNTAIN) g[CYBER_ROCKET_MOON_PAD.y][CYBER_ROCKET_MOON_PAD.x] = T.MOON_GRASS;
   placeOneHut(g, rand, T.MOON_GRASS, MOON_W, MOON_H, midR, midC, 6);
   placeVolcanoes(g, rand, MOON_W, MOON_H, 2);
   return g;
@@ -736,6 +744,47 @@ function buildMoonTown() {
 
 var moonGrid = buildMoonWorld();
 var moonTownGrid = buildMoonTown();
+
+// ---------- Cyber World: reached only by the Moon King's own rocket,
+// after the "future man" robot is rebuilt. A small, walled-off region
+// styled like the inside of a giant computer chip, overrun by zombies. ----------
+var CYBER_W = 34, CYBER_H = 28;
+var CYBER_LANDING_PAD = null; // fixed {x,y} where the cyber rocket sets down, set below
+function buildCyberWorld() {
+  var g = mkMap(CYBER_W, CYBER_H, T.CYBER_FLOOR);
+  var seed = 4242;
+  function rand() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+  var isOpen = function (t) { return t === T.CYBER_FLOOR; };
+  // scattered "circuit block" obstacles, standing in for mountains
+  for (var cb = 0; cb < 6; cb++) {
+    var startRow = 2 + Math.floor(rand() * (CYBER_H - 4));
+    var startCol = 2 + Math.floor(rand() * (CYBER_W - 4));
+    growBlob(g, CYBER_W, CYBER_H, startRow, startCol, T.CYBER_WALL, 5 + Math.floor(rand() * 6), rand, isOpen);
+  }
+  var midR = Math.floor(CYBER_H / 2), midC = Math.floor(CYBER_W / 2);
+  // landing pad + the Robot King waiting right beside it, so he's the
+  // first thing you see stepping off the rocket
+  g[midR][midC] = T.CYBER_FLOOR;
+  CYBER_LANDING_PAD = { x: midC, y: midR };
+  g[midR][midC + 1] = T.ROBOT_KING;
+  // scatter the 9 distinctive tech landmarks across the chip's surface —
+  // pure flavor, same treatment as the moai/shrine/grave on Earth
+  var props = [T.CYBER_DISC, T.CYBER_PHONE, T.CYBER_TV, T.CYBER_ANTENNA, T.CYBER_PAGER,
+    T.CYBER_DIAL, T.CYBER_SLIDER, T.CYBER_PRINTER, T.CYBER_CD];
+  props.forEach(function (propType) {
+    var placed = 0, tries = 0;
+    while (placed < 2 && tries < 300) {
+      tries++;
+      var r = 2 + Math.floor(rand() * (CYBER_H - 4));
+      var c = 2 + Math.floor(rand() * (CYBER_W - 4));
+      if (g[r][c] !== T.CYBER_FLOOR) continue;
+      g[r][c] = propType;
+      placed++;
+    }
+  });
+  return g;
+}
+var cyberGrid = buildCyberWorld();
 
 // ---------- hut & church interiors — small one-room buildings you can
 // actually walk into, talk to the occupant, and give a gift ----------
@@ -809,10 +858,21 @@ var ROBOT_PARTS = {
 // done, he explains he built a companion — a man of the future — and
 // sent him to Earth, never to hear from him again. The 3 robot parts
 // found in Earth's huts are what's left of him; bring all 3 back and
-// the Moon King rebuilds him, rewarding a rocket to a Cyber World that
-// isn't built yet — this quest only goes as far as granting that reward.
+// the Moon King rebuilds him, rewarding a rocket to Cyber World. ----------
 var futureManComplete = false;
 var hasCyberRocket = false;
+// The rocket that flies between the moon and Cyber World — separate
+// vehicle from the Earth<->moon rocket, granted the moment the future
+// man is rebuilt (see turnInRobotParts).
+var cyberRocket = { owned: false, screen: null, x: 0, y: 0 };
+// The Robot King's one-time gift once you first reach Cyber World —
+// zombies (sent by the vengeful aliens) have overrun his world, and his
+// people can't bring themselves to fight, so he arms the party instead.
+var cyberWeaponsGiven = false;
+var CYBER_BLASTER = { name: "Cyber Blaster", dmgBonus: 11, emoji: "🔫", ranged: true, range: 7 };
+// named distinctly from the regular overworld "Zombie" (a much weaker,
+// unrelated common monster) since these are the aliens' shock troops
+var CYBER_ZOMBIE_DEF = { name: "Cyber Zombie", hp: 20, dmg: [3, 9], gold: [10, 20], xp: 14 };
 
 // Places the ISLAND marker at a random open-water tile on the main
 // overworld, far enough from the mainland's coastline to feel like a real
@@ -1368,6 +1428,16 @@ function tryAlienEncounter() {
   }
 }
 
+// Zombies overrun Cyber World — a persistent ambient threat, not a
+// counted quest like the alien encounters (there's no "cured" state).
+function tryZombieEncounter() {
+  if (state.mode !== "cyber") return;
+  if (Math.random() < 0.06) {
+    var group = buildMonsterGroup(CYBER_ZOMBIE_DEF, true);
+    enterArena(group, state.mode, "cyberZombie");
+  }
+}
+
 // Builds a live monster instance scaled by that monster type's current tier.
 function makeMonsterInstance(def, x, y) {
   var tier = tierForMonster(def.name);
@@ -1393,6 +1463,7 @@ function currentGrid() {
   if (state.mode === "islandTown") return islandTownGrid;
   if (state.mode === "moon") return moonGrid;
   if (state.mode === "moonTown") return moonTownGrid;
+  if (state.mode === "cyber") return cyberGrid;
   if (state.mode === "hutInterior") return hutInteriorGrid;
   if (state.mode === "churchInterior") return churchInteriorGrid;
   return overworldGrid;
@@ -1432,6 +1503,7 @@ function isWalkable(t) {
   if (t === T.MOUNTAIN) return flyingFreely; // helicopter is the only thing that can cross mountains
   if (t === T.VOLCANO) return flyingFreely; // impassable on foot, just like a mountain
   if (t === T.WALL) return false;
+  if (t === T.CYBER_WALL) return flyingFreely; // a solid chip block, same treatment as a mountain
   if (t === T.FOREST && state.mounted && state.vehicleType !== "helicopter") return false; // horses/cars can't push through forest, helicopter flies over
   return true;
 }
@@ -1566,6 +1638,7 @@ function modeLabel() {
   if (state.mode === "islandTown") return "PORT REVERIE";
   if (state.mode === "moon") return "GREY MOON";
   if (state.mode === "moonTown") return "LUNA STATION";
+  if (state.mode === "cyber") return "CYBER WORLD";
   if (state.mode === "combat") return "COMBAT";
   // while actually sailing, show the live wind reading instead of the
   // place name — this is the only spot the wind system is visible outside
@@ -1774,6 +1847,38 @@ function drawTile(sx, sy, size, type, gx, gy) {
     // (see renderMap's second pass) so it can never be clipped by a
     // neighboring tile
     drawTile(sx, sy, size, T.GRASS, gx, gy);
+  } else if (type === T.ROBOT_KING) {
+    px(sx, sy, size, size, "#141414");
+    drawHuman(sx + size / 2, sy + size / 2, size, "#cccccc", "S");
+    // a small antenna instead of a crown
+    ctx.strokeStyle = "#39ff88";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx + size / 2, sy + size * 0.1); ctx.lineTo(sx + size / 2, sy - size * 0.05);
+    ctx.stroke();
+    px(sx + size * 0.46, sy - size * 0.09, size * 0.08, size * 0.08, "#39ff88");
+  } else if (type === T.CYBER_FLOOR) {
+    // a dark circuit-board floor — thin traces crossing at a solder point
+    px(sx, sy, size, size, "#0a1a12");
+    ctx.strokeStyle = "#1f6b3a";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx + size / 2, sy); ctx.lineTo(sx + size / 2, sy + size);
+    ctx.moveTo(sx, sy + size / 2); ctx.lineTo(sx + size, sy + size / 2);
+    ctx.stroke();
+    px(sx + size / 2 - 1, sy + size / 2 - 1, 2, 2, "#39ff88");
+  } else if (type === T.CYBER_WALL) {
+    // an impassable chip block — same role as a mountain
+    px(sx, sy, size, size, "#33383f");
+    ctx.strokeStyle = "#12151a";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sx + 2, sy + 2, size - 4, size - 4);
+  } else if (type === T.CYBER_DISC || type === T.CYBER_PHONE || type === T.CYBER_TV ||
+             type === T.CYBER_ANTENNA || type === T.CYBER_PAGER || type === T.CYBER_DIAL ||
+             type === T.CYBER_SLIDER || type === T.CYBER_PRINTER || type === T.CYBER_CD) {
+    // scattered tech landmarks — sit on the circuit floor, emoji drawn
+    // in the second pass, same reasoning as the Earth landmarks above
+    drawTile(sx, sy, size, T.CYBER_FLOOR, gx, gy);
   } else if (type === T.VOLCANO) {
     px(sx, sy, size, size, "#2a1a15");
   } else if (type === T.GRAVE) {
@@ -1964,6 +2069,15 @@ LANDMARK_EMOJI[T.GRAVE] = "🪦";
 LANDMARK_EMOJI[T.BED] = "🛏️";
 LANDMARK_EMOJI[T.MOURNER] = "🧎";
 LANDMARK_EMOJI[T.QUEST_BOY] = "🏃🏻‍♂️‍➡️";
+LANDMARK_EMOJI[T.CYBER_DISC] = "💿";
+LANDMARK_EMOJI[T.CYBER_PHONE] = "📱";
+LANDMARK_EMOJI[T.CYBER_TV] = "📺";
+LANDMARK_EMOJI[T.CYBER_ANTENNA] = "📡";
+LANDMARK_EMOJI[T.CYBER_PAGER] = "📟";
+LANDMARK_EMOJI[T.CYBER_DIAL] = "🖲️";
+LANDMARK_EMOJI[T.CYBER_SLIDER] = "🎚️";
+LANDMARK_EMOJI[T.CYBER_PRINTER] = "🖨️";
+LANDMARK_EMOJI[T.CYBER_CD] = "📀";
 
 var MONSTER_EMOJI = {
   "Orc": "👹",
@@ -1988,7 +2102,8 @@ var MONSTER_EMOJI = {
   "Monkey": "🐒",
   "Yeti": "🫈",
   "Phoenix": "🐦‍🔥",
-  "Merman": "🧜🏽‍♂️"
+  "Merman": "🧜🏽‍♂️",
+  "Cyber Zombie": "🧟‍♂️"
   // Guard, Elite Guard, Wild Horse, and Archwizard are NOT in this map —
   // they use their own drawn pixel-art sprites, not emoji (see drawMonster).
 };
@@ -2218,6 +2333,9 @@ function renderMap() {
         drawShipSprite(sx, sy, TILE);
       }
       if (rocket.owned && rocket.screen === state.mode && rocket.x === gx && rocket.y === gy) {
+        drawRocketSprite(sx, sy, TILE);
+      }
+      if (cyberRocket.owned && cyberRocket.screen === state.mode && cyberRocket.x === gx && cyberRocket.y === gy) {
         drawRocketSprite(sx, sy, TILE);
       }
 
@@ -2594,7 +2712,8 @@ function renderTownScreenOverlay() {
     : townScreen === "king" ? "THRONE ROOM" : townScreen === "stable" ? "STABLE"
     : townScreen === "moonshop" ? "LUNAR ARMORY" : townScreen === "hutGift" ? "A KINDLY STRANGER"
     : townScreen === "questBoy" ? "A BOY BY THE FOUNTAIN"
-    : townScreen === "moonKing" ? "THE MOON KING" : "HEALER";
+    : townScreen === "moonKing" ? "THE MOON KING"
+    : townScreen === "robotKing" ? "THE ROBOT KING" : "HEALER";
   ctx.fillText(title, LW / 2, 90);
   ctx.textAlign = "left";
   ctx.font = "12px 'Courier New', monospace";
@@ -2739,6 +2858,13 @@ function renderTownScreenOverlay() {
       ctx.fillText("Earth, and never heard from him again.", 36, y); y += 18;
       ctx.fillText("If you find any trace of him...\"", 36, y); y += 18;
     }
+  } else if (townScreen === "robotKing") {
+    ctx.fillStyle = PAL.white;
+    ctx.fillText("\"I am the one you rebuilt — a man", 36, y); y += 18;
+    ctx.fillText("of the future, sent to Earth long ago.\"", 36, y); y += 20;
+    ctx.fillText("\"Zombies, sent by the aliens, have", 36, y); y += 18;
+    ctx.fillText("overrun Cyber World. We cannot fight —", 36, y); y += 18;
+    ctx.fillText("but we've made you weapons. Use them well.\"", 36, y); y += 18;
   }
 }
 
@@ -3119,7 +3245,7 @@ function startCombatWithMonster(mapMonster, screenKey) {
 var SPECIAL_MONSTER_DEFS = [
   SEA_SERPENT_DEF, PIRATE_DEF, GUARD_DEF, WILD_HORSE_DEF, WIZARD_DEF,
   BAT_DEF, GIANT_WASP_DEF, GIANT_EAGLE_DEF, MONKEY_DEF, YETI_DEF, KRAKEN_DEF, ALIEN_DEF,
-  PHOENIX_DEF, ELITE_GUARD_DEF, ARCHWIZARD_DEF, MERMAN_DEF
+  PHOENIX_DEF, ELITE_GUARD_DEF, ARCHWIZARD_DEF, MERMAN_DEF, CYBER_ZOMBIE_DEF
 ];
 function findMonsterDef(name) {
   for (var i = 0; i < MONSTER_DEFS.length; i++) {
@@ -3841,6 +3967,16 @@ function move(dx, dy) {
   if (t === T.MOAI) { pushLog("An ancient moai gazes back at you, weathered and silent."); renderAll(); return; }
   if (t === T.SHRINE) { pushLog("A small shrine. You bow your head for a moment of quiet."); renderAll(); return; }
   if (t === T.GRAVE) { pushLog("A worn headstone. You can't make out the name."); renderAll(); return; }
+  if (t === T.ROBOT_KING) { openRobotKing(); return; }
+  if (t === T.CYBER_DISC) { pushLog("A shattered optical disc glints in the light."); renderAll(); return; }
+  if (t === T.CYBER_PHONE) { pushLog("An old touchscreen phone, its battery long dead."); renderAll(); return; }
+  if (t === T.CYBER_TV) { pushLog("A boxy television flickers with static."); renderAll(); return; }
+  if (t === T.CYBER_ANTENNA) { pushLog("A satellite dish tracks something far overhead."); renderAll(); return; }
+  if (t === T.CYBER_PAGER) { pushLog("A pager beeps once, then falls silent."); renderAll(); return; }
+  if (t === T.CYBER_DIAL) { pushLog("A trackball dial, worn smooth from use."); renderAll(); return; }
+  if (t === T.CYBER_SLIDER) { pushLog("A slider control, stuck halfway."); renderAll(); return; }
+  if (t === T.CYBER_PRINTER) { pushLog("An old printer hums, jammed mid-page."); renderAll(); return; }
+  if (t === T.CYBER_CD) { pushLog("A stack of dusty CDs, unlabeled."); renderAll(); return; }
   if (t === T.INNKEEPER) {
     if (sharedGold >= 10) {
       sharedGold -= 10;
@@ -3895,6 +4031,25 @@ function move(dx, dy) {
       rocket.screen = "moon";
       rocket.x = ROCKET_MOON_PAD.x; rocket.y = ROCKET_MOON_PAD.y;
       pushLog("The rocket blasts off for the moon!");
+    }
+    renderAll();
+    return;
+  }
+  // Boarding the Moon King's rocket: flies between the moon and Cyber
+  // World — a separate vehicle and route from the Earth<->moon rocket.
+  if (cyberRocket.owned && cyberRocket.screen === state.mode && cyberRocket.x === nx && cyberRocket.y === ny) {
+    if (state.mode === "cyber") {
+      state.mode = "moon";
+      state.x = CYBER_ROCKET_MOON_PAD.x; state.y = CYBER_ROCKET_MOON_PAD.y;
+      cyberRocket.screen = "moon";
+      cyberRocket.x = CYBER_ROCKET_MOON_PAD.x; cyberRocket.y = CYBER_ROCKET_MOON_PAD.y;
+      pushLog("The rocket carries you back to the moon.");
+    } else {
+      state.mode = "cyber";
+      state.x = CYBER_LANDING_PAD.x; state.y = CYBER_LANDING_PAD.y;
+      cyberRocket.screen = "cyber";
+      cyberRocket.x = CYBER_LANDING_PAD.x; cyberRocket.y = CYBER_LANDING_PAD.y;
+      pushLog("The rocket blasts off for Cyber World!");
     }
     renderAll();
     return;
@@ -3987,6 +4142,8 @@ function move(dx, dy) {
   } else if (state.mode === "moon") {
     tryAlienEncounter();
     tryVolcanoBurn();
+  } else if (state.mode === "cyber") {
+    tryZombieEncounter();
   } else if (state.mode === "town" || state.mode === "islandTown") {
     stepAllRoamingEntities();
     // the tavern keeper talks to you as soon as you're next to (or bump
@@ -4167,6 +4324,7 @@ function gatherSaveData() {
   return {
     party: party, sharedGold: sharedGold, inventory: inventory,
     state: state, ship: ship, horse: horse, car: car, helicopter: helicopter, rocket: rocket,
+    cyberRocket: cyberRocket,
     tavernRecruit: tavernRecruit, monsterKillCounts: monsterKillCounts, wind: wind,
     alienEncountersWon: alienEncountersWon, alienQuestComplete: alienQuestComplete,
     hasWizardsWand: hasWizardsWand, wizardQuestComplete: wizardQuestComplete,
@@ -4174,7 +4332,8 @@ function gatherSaveData() {
     gearQuestActivated: gearQuestActivated, hasGearPart: hasGearPart,
     armQuestActivated: armQuestActivated, hasArmPart: hasArmPart,
     legQuestActivated: legQuestActivated, hasLegPart: hasLegPart,
-    futureManComplete: futureManComplete, hasCyberRocket: hasCyberRocket
+    futureManComplete: futureManComplete, hasCyberRocket: hasCyberRocket,
+    cyberWeaponsGiven: cyberWeaponsGiven
   };
 }
 
@@ -4192,6 +4351,7 @@ function applySaveData(d) {
   }
   state = d.state;
   ship = d.ship; horse = d.horse; car = d.car; helicopter = d.helicopter; rocket = d.rocket;
+  cyberRocket = d.cyberRocket || { owned: false, screen: null, x: 0, y: 0 };
   tavernRecruit = d.tavernRecruit || null;
   monsterKillCounts = d.monsterKillCounts || {};
   wind = d.wind || { dir: "N", movesLeft: 5 };
@@ -4210,6 +4370,7 @@ function applySaveData(d) {
   hasLegPart = !!d.hasLegPart;
   futureManComplete = !!d.futureManComplete;
   hasCyberRocket = !!d.hasCyberRocket;
+  cyberWeaponsGiven = !!d.cyberWeaponsGiven;
   // Old saves (from before the 8-level dungeon rework) have no
   // dungeonLevel at all. Most of the time that's harmless — it just
   // gets set to 1 the next time they walk into the dungeon tile — but a
@@ -4554,17 +4715,42 @@ function openMoonKing() {
   }
   renderAll();
 }
-// Turns in all 3 robot parts for the Moon King's reward — a rocket to a
-// Cyber World that doesn't exist yet, so this just grants the flag.
+// Turns in all 3 robot parts for the Moon King's reward — reassembles
+// the future man and grants his own rocket, parked out on the moon's
+// surface (see CYBER_ROCKET_MOON_PAD), to fly to Cyber World.
 function turnInRobotParts() {
   if (!(hasGearPart && hasArmPart && hasLegPart) || futureManComplete) return;
   futureManComplete = true;
   hasCyberRocket = true;
+  cyberRocket.owned = true;
+  cyberRocket.screen = "moon";
+  cyberRocket.x = CYBER_ROCKET_MOON_PAD.x; cyberRocket.y = CYBER_ROCKET_MOON_PAD.y;
   pushLog("-----Quest Complete!-----");
   pushLog("The Moon King assembles the parts before your eyes.");
-  pushLog("\"He's whole again! Take this — a rocket built for");
-  pushLog("one more voyage, to the Cyber World.\"");
+  pushLog("The man of the future stirs, and speaks:");
+  pushLog("\"I am from a world beyond your time — Cyber World.");
+  pushLog("You must fly there by rocket ship to see it.\"");
+  pushLog("\"Take this,\" says the Moon King. \"A rocket built for");
+  pushLog("one more voyage. It awaits you out on the surface.\"");
   townScreen = null;
+  renderAll();
+}
+function openRobotKing() {
+  townScreen = "robotKing";
+  pushLog("-----The Robot King-----");
+  pushLog("\"Welcome, traveler. I am the one you rebuilt —");
+  pushLog("a man of the future, sent to Earth long ago.\"");
+  pushLog("\"This is Cyber World, and it is dying. The aliens,");
+  pushLog("spiteful after their defeat, sent zombies to destroy us.");
+  pushLog("We are not built to harm — we cannot fight them.\"");
+  if (!cyberWeaponsGiven) {
+    cyberWeaponsGiven = true;
+    for (var i = 0; i < party.length; i++) inventory.push({ category: "weapon", item: CYBER_BLASTER });
+    pushLog("\"But we have made you weapons. Use them well.\"");
+    pushLog("Received " + party.length + " Cyber Blasters!");
+  } else {
+    pushLog("\"Stay sharp out there.\"");
+  }
   renderAll();
 }
 function openVaultChest(x, y) {
