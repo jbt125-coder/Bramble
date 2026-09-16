@@ -182,6 +182,9 @@ var OW_START_X = Math.floor(OW_W / 2) - 12, OW_START_Y = Math.floor(OW_H / 2);
 // designated for a quest (e.g. the dog hut)
 var hutPositions = [];
 var dogHutPos = null; // set right after buildOverworld() runs, below
+var gearHutPos = null; // ditto — the other 2 mainland huts' robot-part quests
+var armHutPos = null;
+var legHutPos = null; // set after buildIslandOverworld() runs — the lone island hut
 // ---------- clustered terrain generation ----------
 // Instead of rolling each tile independently (which scatters single tiles
 // everywhere), we seed a handful of "blob centers" per feature type and
@@ -568,7 +571,10 @@ function buildIslandOverworld() {
   g[midR][midC] = T.TOWN;
 
   placePortalInForest(g, rand);
-  placeOneHut(g, rand, T.GRASS, ISLAND_W, ISLAND_H, midR, midC, 10);
+  // the lone island hut hosts the leg-part quest — assigning legHutPos
+  // here (not "var") reaches the module-level global declared up near
+  // hutPositions, which by now is already initialized to null
+  legHutPos = placeOneHut(g, rand, T.GRASS, ISLAND_W, ISLAND_H, midR, midC, 10);
   return g;
 }
 
@@ -584,8 +590,9 @@ function placeOneHut(g, rand, openTile, w, h, avoidR, avoidC, minDist) {
       if (d < minDist) continue;
     }
     g[r][c] = T.HUT;
-    return;
+    return { x: c, y: r };
   }
+  return null;
 }
 
 // Hides the magic portal somewhere inside one of the island's forest
@@ -660,6 +667,9 @@ var overworldGrid = buildOverworld();
 // designate the first-placed hut as the one holding the lost dog — reuses
 // an existing hut (kept well clear of the castle) rather than adding a new one
 dogHutPos = hutPositions[0] || null;
+// the other 2 mainland huts each get their own robot-part quest
+gearHutPos = hutPositions[1] || null;
+armHutPos = hutPositions[2] || null;
 var townGrid = buildTown();
 var islandGrid = buildIslandOverworld();
 var islandTownGrid = buildIslandTown();
@@ -774,7 +784,25 @@ var dogQuestStarted = false;
 var dogQuestComplete = false;
 var hasRescuedDog = false;
 var DOG_NAME = "Biscuit";
-var DOG_TILE = { x: 4, y: 5 }; // spot inside the designated dog hut where the dog waits
+// spot inside a hut interior where its one special prop sits — the dog in
+// the dog hut, or a robot part once that hut's own quest is activated.
+// Every hut shares one interior layout, and only one role is ever active
+// per hut, so reusing a single coordinate for all of them is safe.
+var HUT_PROP_TILE = { x: 4, y: 5 };
+
+// ---------- hut quests: build-a-robot — a specific gift (not just any
+// non-gold gift) at each of 3 other huts activates that hut's own quest;
+// the part then appears at HUT_PROP_TILE for the player to go collect ----------
+// (gearHutPos/armHutPos/legHutPos are declared up near hutPositions, and
+// assigned once their respective worlds are built, below)
+var gearQuestActivated = false, hasGearPart = false;
+var armQuestActivated = false, hasArmPart = false;
+var legQuestActivated = false, hasLegPart = false;
+var ROBOT_PARTS = {
+  gear: { emoji: "⚙️", giftKind: "potion", label: "a gear" },
+  arm: { emoji: "🦾", giftKind: "weapon", label: "a mechanical arm" },
+  leg: { emoji: "🦿", giftKind: "armor", label: "a mechanical leg" }
+};
 
 // Places the ISLAND marker at a random open-water tile on the main
 // overworld, far enough from the mainland's coastline to feel like a real
@@ -1545,6 +1573,9 @@ function activeQuestLine() {
       ? "Quest: Bring " + DOG_NAME + " back to the boy in Bramble"
       : "Quest: Find the boy's lost dog, " + DOG_NAME;
   }
+  if (gearQuestActivated && !hasGearPart) return "Quest: Collect the gear " + ROBOT_PARTS.gear.emoji + " left for you";
+  if (armQuestActivated && !hasArmPart) return "Quest: Collect the arm " + ROBOT_PARTS.arm.emoji + " left for you";
+  if (legQuestActivated && !hasLegPart) return "Quest: Collect the leg " + ROBOT_PARTS.leg.emoji + " left for you";
   return null;
 }
 
@@ -2231,10 +2262,16 @@ function renderMap() {
       var lgx = state.x - half + lvx, lgy = state.y - half + lvy;
       var lt = tileAt(lgx, lgy);
       var glyph = LANDMARK_EMOJI[lt];
-      // the dog sits here in plain sight regardless of quest state — the
-      // visible tell that this hut's stranger is worth a gift
-      if (state.mode === "hutInterior" && state.inDogHut && !hasRescuedDog &&
-          lgx === DOG_TILE.x && lgy === DOG_TILE.y) glyph = "🐕";
+      if (state.mode === "hutInterior" && lgx === HUT_PROP_TILE.x && lgy === HUT_PROP_TILE.y) {
+        // the dog sits here in plain sight regardless of quest state — the
+        // visible tell that this hut's stranger is worth a gift. A robot
+        // part, on the other hand, only appears once its own hut quest
+        // has been activated by the right gift.
+        if (state.inDogHut && !hasRescuedDog) glyph = "🐕";
+        else if (state.inGearHut && gearQuestActivated && !hasGearPart) glyph = ROBOT_PARTS.gear.emoji;
+        else if (state.inArmHut && armQuestActivated && !hasArmPart) glyph = ROBOT_PARTS.arm.emoji;
+        else if (state.inLegHut && legQuestActivated && !hasLegPart) glyph = ROBOT_PARTS.leg.emoji;
+      }
       if (!glyph) continue;
       var lsx = MAP_INNER_X0 + lvx * TILE, lsy = MAP_INNER_Y0 + lvy * TILE;
       drawEmojiTile(lsx, lsy, TILE, glyph);
@@ -3727,19 +3764,26 @@ function move(dx, dy) {
   if (t === T.CHEST) { openVaultChest(nx, ny); return; }
   if (t === T.HUT_NPC) { openHutGift(); return; }
   if (t === T.QUEST_BOY) { openQuestBoy(); return; }
-  // the dog itself is just a sighting, not something you can grab — give
-  // the hut's kindly stranger a gift (see giveHutGift) to actually earn it
-  if (state.mode === "hutInterior" && state.inDogHut && !hasRescuedDog &&
-      nx === DOG_TILE.x && ny === DOG_TILE.y) {
-    pushLog("A frightened dog watches you from the corner.");
-    renderAll();
-    return;
+  if (state.mode === "hutInterior" && nx === HUT_PROP_TILE.x && ny === HUT_PROP_TILE.y) {
+    // the dog itself is just a sighting, not something you can grab —
+    // give the hut's kindly stranger a gift (see giveHutGift) to earn it
+    if (state.inDogHut && !hasRescuedDog) {
+      pushLog("A frightened dog watches you from the corner.");
+      renderAll();
+      return;
+    }
+    if (state.inGearHut && gearQuestActivated && !hasGearPart) { collectRobotPart("gear"); return; }
+    if (state.inArmHut && armQuestActivated && !hasArmPart) { collectRobotPart("arm"); return; }
+    if (state.inLegHut && legQuestActivated && !hasLegPart) { collectRobotPart("leg"); return; }
   }
   if (t === T.STABLE) { openStable(); return; }
   if (t === T.MOON_SHOP) { openMoonShop(); return; }
   if (t === T.HUT) {
     state.fromBuilding = { mode: state.mode, x: state.x, y: state.y };
     state.inDogHut = state.mode === "overworld" && !!dogHutPos && nx === dogHutPos.x && ny === dogHutPos.y;
+    state.inGearHut = state.mode === "overworld" && !!gearHutPos && nx === gearHutPos.x && ny === gearHutPos.y;
+    state.inArmHut = state.mode === "overworld" && !!armHutPos && nx === armHutPos.x && ny === armHutPos.y;
+    state.inLegHut = state.mode === "island" && !!legHutPos && nx === legHutPos.x && ny === legHutPos.y;
     state.mode = "hutInterior";
     state.x = 4; state.y = 6; // just inside the door
     pushLog("You step into the hut.");
@@ -4089,7 +4133,10 @@ function gatherSaveData() {
     tavernRecruit: tavernRecruit, monsterKillCounts: monsterKillCounts, wind: wind,
     alienEncountersWon: alienEncountersWon, alienQuestComplete: alienQuestComplete,
     hasWizardsWand: hasWizardsWand, wizardQuestComplete: wizardQuestComplete,
-    dogQuestStarted: dogQuestStarted, dogQuestComplete: dogQuestComplete, hasRescuedDog: hasRescuedDog
+    dogQuestStarted: dogQuestStarted, dogQuestComplete: dogQuestComplete, hasRescuedDog: hasRescuedDog,
+    gearQuestActivated: gearQuestActivated, hasGearPart: hasGearPart,
+    armQuestActivated: armQuestActivated, hasArmPart: hasArmPart,
+    legQuestActivated: legQuestActivated, hasLegPart: hasLegPart
   };
 }
 
@@ -4117,6 +4164,12 @@ function applySaveData(d) {
   dogQuestStarted = !!d.dogQuestStarted;
   dogQuestComplete = !!d.dogQuestComplete;
   hasRescuedDog = !!d.hasRescuedDog;
+  gearQuestActivated = !!d.gearQuestActivated;
+  hasGearPart = !!d.hasGearPart;
+  armQuestActivated = !!d.armQuestActivated;
+  hasArmPart = !!d.hasArmPart;
+  legQuestActivated = !!d.legQuestActivated;
+  hasLegPart = !!d.hasLegPart;
   // Old saves (from before the 8-level dungeon rework) have no
   // dungeonLevel at all. Most of the time that's harmless — it just
   // gets set to 1 the next time they walk into the dungeon tile — but a
@@ -4580,8 +4633,50 @@ function giveHutGift(kind, itemOrIdx) {
     hasRescuedDog = true;
     pushLog("\"He's been trembling in the corner for days,\" they say.");
     pushLog("\"You've been so kind — take " + DOG_NAME + ". He'll want to go home.\"");
+  } else if (kind !== "gold") {
+    activateRobotHutQuest(kind);
   }
   townScreen = null;
+  renderAll();
+}
+// Each robot-part hut wants one specific kind of gift (not just any
+// non-gold one) — giving the right kind for the first time activates
+// that hut's quest and the part appears at HUT_PROP_TILE to go collect;
+// the wrong kind just hints at what they're actually after.
+function activateRobotHutQuest(kind) {
+  if (state.inGearHut && !gearQuestActivated) {
+    if (kind === ROBOT_PARTS.gear.giftKind) {
+      gearQuestActivated = true;
+      pushLog("\"Ah, a potion — just the thing.\" They rummage about.");
+      pushLog("\"There's a gear in the back room, if you want it.\"");
+    } else {
+      pushLog("\"Kind of you, but... it's a potion I could really use.\"");
+    }
+  } else if (state.inArmHut && !armQuestActivated) {
+    if (kind === ROBOT_PARTS.arm.giftKind) {
+      armQuestActivated = true;
+      pushLog("\"A weapon, how useful.\" They nod toward the back room.");
+      pushLog("\"I've a spare mechanical arm gathering dust in there.\"");
+    } else {
+      pushLog("\"Kind of you, but... I could really use a good weapon.\"");
+    }
+  } else if (state.inLegHut && !legQuestActivated) {
+    if (kind === ROBOT_PARTS.leg.giftKind) {
+      legQuestActivated = true;
+      pushLog("\"Armor — perfect, actually.\" They gesture to the corner.");
+      pushLog("\"There's a mechanical leg back there, take it if you like.\"");
+    } else {
+      pushLog("\"Kind of you, but... it's armor I'm really after.\"");
+    }
+  }
+}
+// Called when bumping into the visible part at HUT_PROP_TILE, once its
+// hut's quest has been activated (see activateRobotHutQuest).
+function collectRobotPart(kind) {
+  if (kind === "gear") hasGearPart = true;
+  else if (kind === "arm") hasArmPart = true;
+  else if (kind === "leg") hasLegPart = true;
+  pushLog("You pick up " + ROBOT_PARTS[kind].label + " " + ROBOT_PARTS[kind].emoji + ".");
   renderAll();
 }
 function openQuestBoy() {
