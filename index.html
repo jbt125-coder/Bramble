@@ -2231,6 +2231,8 @@ function renderMap() {
       var lgx = state.x - half + lvx, lgy = state.y - half + lvy;
       var lt = tileAt(lgx, lgy);
       var glyph = LANDMARK_EMOJI[lt];
+      // the dog sits here in plain sight regardless of quest state — the
+      // visible tell that this hut's stranger is worth a gift
       if (state.mode === "hutInterior" && state.inDogHut && !hasRescuedDog &&
           lgx === DOG_TILE.x && lgy === DOG_TILE.y) glyph = "🐕";
       if (!glyph) continue;
@@ -3725,8 +3727,14 @@ function move(dx, dy) {
   if (t === T.CHEST) { openVaultChest(nx, ny); return; }
   if (t === T.HUT_NPC) { openHutGift(); return; }
   if (t === T.QUEST_BOY) { openQuestBoy(); return; }
+  // the dog itself is just a sighting, not something you can grab — give
+  // the hut's kindly stranger a gift (see giveHutGift) to actually earn it
   if (state.mode === "hutInterior" && state.inDogHut && !hasRescuedDog &&
-      nx === DOG_TILE.x && ny === DOG_TILE.y) { rescueDog(); return; }
+      nx === DOG_TILE.x && ny === DOG_TILE.y) {
+    pushLog("A frightened dog watches you from the corner.");
+    renderAll();
+    return;
+  }
   if (t === T.STABLE) { openStable(); return; }
   if (t === T.MOON_SHOP) { openMoonShop(); return; }
   if (t === T.HUT) {
@@ -4564,15 +4572,14 @@ function giveHutGift(kind, itemOrIdx) {
   var anyHurt = party.some(function (p) { return p.alive && p.hp < p.maxHp; });
   party.forEach(function (p) { if (p.alive) p.hp = p.maxHp; });
   pushLog(anyHurt ? "Touched, they tend your wounds. Party healed." : "Touched by the gift, though you're already well.");
-  // a gift of anything but gold earns more than healing — the stranger
-  // opens up and shares a story, which is what kicks off a quest. Any
-  // hut's stranger can tell this one, not just the one holding the dog,
-  // so giving a gift is a valid way to discover the quest on its own.
-  if (kind !== "gold" && !dogQuestStarted && !hasRescuedDog && !dogQuestComplete) {
-    dogQuestStarted = true;
-    pushLog("\"Bless you,\" they add. \"Say — a boy in Bramble");
-    pushLog("has lost his dog. Poor thing's probably hiding");
-    pushLog("in one of the huts scattered about.\"");
+  // a gift of anything but gold earns more than healing at some huts —
+  // the stranger opens up. At the hut sheltering the lost dog, that's
+  // the reward itself: they hand the dog over. Talking to the boy is
+  // still the only thing that starts the tracked quest/story.
+  if (state.inDogHut && !hasRescuedDog) {
+    hasRescuedDog = true;
+    pushLog("\"He's been trembling in the corner for days,\" they say.");
+    pushLog("\"You've been so kind — take " + DOG_NAME + ". He'll want to go home.\"");
   }
   townScreen = null;
   renderAll();
@@ -4593,16 +4600,6 @@ function openQuestBoy() {
     pushLog("Please, bring him home!\"");
     dogQuestStarted = true;
   }
-  renderAll();
-}
-// The dog waits in whichever hut was designated `dogHutPos` — bumping
-// into it there (see move()) calls this directly, no picker needed.
-function rescueDog() {
-  if (hasRescuedDog) return;
-  hasRescuedDog = true;
-  dogQuestStarted = true;
-  pushLog("A frightened dog cowers in the corner.");
-  pushLog("You coax him out gently — " + DOG_NAME + " is safe!");
   renderAll();
 }
 function turnInDog() {
