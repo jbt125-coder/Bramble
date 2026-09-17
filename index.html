@@ -163,7 +163,8 @@ var T = {
   STAIRS_DOWN: 39, STAIRS_UP: 40, BOSS: 41, QUEST_BOY: 42, MOON_KING: 43,
   ROBOT_KING: 44, CYBER_WALL: 45, CYBER_FLOOR: 46,
   CYBER_DISC: 47, CYBER_PHONE: 48, CYBER_TV: 49, CYBER_ANTENNA: 50, CYBER_PAGER: 51,
-  CYBER_DIAL: 52, CYBER_SLIDER: 53, CYBER_PRINTER: 54, CYBER_CD: 55
+  CYBER_DIAL: 52, CYBER_SLIDER: 53, CYBER_PRINTER: 54, CYBER_CD: 55,
+  RED_TREE: 56
 };
 
 function mkMap(w, h, fill) {
@@ -188,6 +189,9 @@ var dogHutPos = null; // set right after buildOverworld() runs, below
 var gearHutPos = null; // ditto — the other 2 mainland huts' robot-part quests
 var armHutPos = null;
 var legHutPos = null; // set after buildIslandOverworld() runs — the lone island hut
+// fixed spot in Port Reverie (the island town), forced red instead of the
+// usual green — needs to exist before buildIslandTown() runs, below
+var RED_TREE_POS = { x: 5, y: 8 };
 // ---------- clustered terrain generation ----------
 // Instead of rolling each tile independently (which scatters single tiles
 // everywhere), we seed a handful of "blob centers" per feature type and
@@ -663,6 +667,10 @@ function buildIslandTown() {
   });
   g[fountainY][fountainX] = T.FOUNTAIN;
 
+  // the one magical red tree, forced onto a fixed spot so it's never left
+  // to chance by the scattered-forest RNG above
+  g[RED_TREE_POS.y][RED_TREE_POS.x] = T.RED_TREE;
+
   return g;
 }
 
@@ -855,6 +863,15 @@ var hasShovel = false;
 var hasTeddyBear = false;
 // one of buildTown()'s graveSpots, re-flavored as the jester's grave
 var JESTER_GRAVE_POS = { x: 34, y: 9 };
+
+// ---------- the arm hut's fetch quest: a weapon earns you a lumberjack's
+// axe and a tip about a magical red tree in Port Reverie. Chop it down
+// for its heart, then trade that back for the arm. ----------
+var hasAxe = false;
+var hasTreeHeart = false;
+// (RED_TREE_POS is declared up near hutPositions, and forced onto Port
+// Reverie's grid the moment buildIslandTown() runs, so it's ready before
+// this point in the file)
 
 // ---------- the Moon King's "future man" quest: once the alien quest is
 // done, he explains he built a companion — a man of the future — and
@@ -1115,6 +1132,21 @@ function digJesterGrave() {
   hasTeddyBear = true;
   pushLog("You dig into the soft earth...");
   pushLog("You found a small, dusty teddy bear! 🧸");
+  renderAll();
+}
+function isAdjacentToRedTree() {
+  if (state.mode !== "islandTown") return false;
+  var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0], [0, 0]];
+  for (var i = 0; i < dirs.length; i++) {
+    if (state.x + dirs[i][0] === RED_TREE_POS.x && state.y + dirs[i][1] === RED_TREE_POS.y) return true;
+  }
+  return false;
+}
+function chopRedTree() {
+  if (hasTreeHeart) { pushLog("The tree's already been felled."); renderAll(); return; }
+  hasTreeHeart = true;
+  pushLog("You swing the axe again and again...");
+  pushLog("The red tree falls, revealing a pulsing magical heart! 🫀");
   renderAll();
 }
 
@@ -1670,7 +1702,8 @@ function activeQuestLine() {
   }
   if (gearQuestActivated && !hasGearPart && !hasTeddyBear) return "Quest: Dig up the teddy bear 🧸 by the jester's grave";
   if (hasTeddyBear && !hasGearPart) return "Quest: Return the teddy bear 🧸 to the gear hut";
-  if (armQuestActivated && !hasArmPart) return "Quest: Collect the arm " + ROBOT_PARTS.arm.emoji + " left for you";
+  if (armQuestActivated && !hasArmPart && !hasTreeHeart) return "Quest: Chop the red tree in Port Reverie";
+  if (hasTreeHeart && !hasArmPart) return "Quest: Return the tree's heart 🫀 to the arm hut";
   if (legQuestActivated && !hasLegPart) return "Quest: Collect the leg " + ROBOT_PARTS.leg.emoji + " left for you";
   if (hasGearPart && hasArmPart && hasLegPart && !futureManComplete) return "Quest: Bring the robot parts to the Moon King";
   return null;
@@ -1719,6 +1752,16 @@ function drawTile(sx, sy, size, type, gx, gy) {
     ctx.fillStyle = PAL.green;
     ctx.beginPath(); ctx.arc(cx - size * 0.15, cy - size * 0.1, size * 0.26, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(cx + size * 0.15, cy - size * 0.15, size * 0.22, 0, Math.PI * 2); ctx.fill();
+  } else if (type === T.RED_TREE) {
+    // same shape as an ordinary tree, but unmistakably red — the one
+    // magical tree hiding in Port Reverie's scattered greenery
+    px(sx, sy, size, size, PAL.black);
+    var rcx = sx + size / 2, rcy = sy + size / 2;
+    ctx.fillStyle = "#8b1a1a";
+    ctx.beginPath(); ctx.arc(rcx, rcy, size * 0.42, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = PAL.red;
+    ctx.beginPath(); ctx.arc(rcx - size * 0.15, rcy - size * 0.1, size * 0.26, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(rcx + size * 0.15, rcy - size * 0.15, size * 0.22, 0, Math.PI * 2); ctx.fill();
   } else if (type === T.MOUNTAIN) {
     px(sx, sy, size, size, PAL.black);
     ctx.fillStyle = PAL.gray;
@@ -2411,10 +2454,9 @@ function renderMap() {
         // the dog sits here in plain sight regardless of quest state — the
         // visible tell that this hut's stranger is worth a gift. A robot
         // part, on the other hand, only appears once its own hut quest
-        // has been activated by the right gift. The gear hut is the
-        // exception — its "part" is a fetch quest, not a room pickup.
+        // has been activated by the right gift. The gear and arm huts are
+        // the exception — their "parts" are fetch quests, not room pickups.
         if (state.inDogHut && !hasRescuedDog) glyph = "🐕";
-        else if (state.inArmHut && armQuestActivated && !hasArmPart) glyph = ROBOT_PARTS.arm.emoji;
         else if (state.inLegHut && legQuestActivated && !hasLegPart) glyph = ROBOT_PARTS.leg.emoji;
       }
       if (!glyph) continue;
@@ -2827,6 +2869,10 @@ function renderTownScreenOverlay() {
       ctx.fillText("Give back the teddy bear:", 36, y); y += 20;
       ctx.fillStyle = PAL.gold;
       ctx.fillText("Teddy Bear 🧸  [tap T]", 36, y); y += 18;
+    } else if (state.inArmHut && hasTreeHeart && !hasArmPart) {
+      ctx.fillText("Give back the tree's heart:", 36, y); y += 20;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Tree Heart 🫀  [tap H]", 36, y); y += 18;
     } else {
       ctx.fillText("Give a gift to be healed:", 36, y); y += 20;
       ctx.fillText("Gold (" + Math.min(sharedGold, 20) + "g)  [tap G]", 36, y); y += 18;
@@ -3951,7 +3997,6 @@ function move(dx, dy) {
       renderAll();
       return;
     }
-    if (state.inArmHut && armQuestActivated && !hasArmPart) { collectRobotPart("arm"); return; }
     if (state.inLegHut && legQuestActivated && !hasLegPart) { collectRobotPart("leg"); return; }
   }
   if (t === T.STABLE) { openStable(); return; }
@@ -3995,6 +4040,18 @@ function move(dx, dy) {
       }
     } else {
       pushLog("A worn headstone. You can't make out the name.");
+    }
+    renderAll();
+    return;
+  }
+  if (t === T.RED_TREE) {
+    if (hasTreeHeart) {
+      pushLog("A red stump, hollowed out where its heart once was.");
+    } else if (hasAxe) {
+      pushLog("A strange tree, its leaves a deep, unnatural red.");
+      pushLog("(Chop it down with ACTION.)");
+    } else {
+      pushLog("A strange tree, its leaves a deep, unnatural red.");
     }
     renderAll();
     return;
@@ -4214,6 +4271,9 @@ function cmdAction() {
   if (isAdjacentToJesterGrave() && hasShovel && !hasTeddyBear) {
     choices.push({ label: "Dig at the grave", fn: digJesterGrave });
   }
+  if (isAdjacentToRedTree() && hasAxe && !hasTreeHeart) {
+    choices.push({ label: "Chop the red tree", fn: chopRedTree });
+  }
   var here = groundItemAt(state.mode, state.x, state.y);
   if (here) {
     var itemLabel = here.kind === "gold" ? "Open chest" : "Get " + here.item.name;
@@ -4346,6 +4406,7 @@ function gatherSaveData() {
     gearQuestActivated: gearQuestActivated, hasGearPart: hasGearPart,
     hasShovel: hasShovel, hasTeddyBear: hasTeddyBear,
     armQuestActivated: armQuestActivated, hasArmPart: hasArmPart,
+    hasAxe: hasAxe, hasTreeHeart: hasTreeHeart,
     legQuestActivated: legQuestActivated, hasLegPart: hasLegPart,
     futureManComplete: futureManComplete, hasCyberRocket: hasCyberRocket,
     cyberWeaponsGiven: cyberWeaponsGiven
@@ -4382,6 +4443,8 @@ function applySaveData(d) {
   hasTeddyBear = !!d.hasTeddyBear;
   armQuestActivated = !!d.armQuestActivated;
   hasArmPart = !!d.hasArmPart;
+  hasAxe = !!d.hasAxe;
+  hasTreeHeart = !!d.hasTreeHeart;
   legQuestActivated = !!d.legQuestActivated;
   hasLegPart = !!d.hasLegPart;
   futureManComplete = !!d.futureManComplete;
@@ -4870,6 +4933,10 @@ function openHutGift() {
     pushLog("\"Is that... my teddy bear?! You found him!\"");
   } else if (state.inGearHut && gearQuestActivated && !hasTeddyBear) {
     pushLog("\"Please, bring back my teddy bear from the jester's grave.\"");
+  } else if (state.inArmHut && hasTreeHeart && !hasArmPart) {
+    pushLog("\"You actually found it — the tree's magical heart!\"");
+  } else if (state.inArmHut && armQuestActivated && !hasTreeHeart) {
+    pushLog("\"Bring back that tree's heart when you can.\"");
   } else {
     pushLog("\"Times are hard. A gift, and I'll tend your wounds.\"");
   }
@@ -4882,6 +4949,16 @@ function giveHutGift(kind, itemOrIdx) {
     hasGearPart = true;
     pushLog("\"My teddy bear! Oh, thank you!\" They press a gear into your hand.");
     pushLog("Received a gear " + ROBOT_PARTS.gear.emoji + "!");
+    townScreen = null;
+    renderAll();
+    return;
+  }
+  if (kind === "treeHeart") {
+    if (!hasTreeHeart || hasArmPart) { pushLog("You have nothing like that to give."); renderAll(); return; }
+    hasTreeHeart = false;
+    hasArmPart = true;
+    pushLog("\"The tree's heart! Just what I needed.\" They fit it into a mechanical arm.");
+    pushLog("Received a mechanical arm " + ROBOT_PARTS.arm.emoji + "!");
     townScreen = null;
     renderAll();
     return;
@@ -4945,8 +5022,11 @@ function activateRobotHutQuest(kind) {
   } else if (state.inArmHut && !armQuestActivated) {
     if (kind === ROBOT_PARTS.arm.giftKind) {
       armQuestActivated = true;
-      pushLog("\"A weapon, how useful.\" They nod toward the back room.");
-      pushLog("\"I've a spare mechanical arm gathering dust in there.\"");
+      hasAxe = true;
+      pushLog("\"A weapon — that'll do nicely.\" They press a");
+      pushLog("lumberjack's axe into your hands. \"Sail to Port");
+      pushLog("Reverie and find the red tree — cut it down.");
+      pushLog("Its heart is something magical.\"");
     } else {
       pushLog("\"Kind of you, but... I could really use a good weapon.\"");
     }
@@ -4963,8 +5043,7 @@ function activateRobotHutQuest(kind) {
 // Called when bumping into the visible part at HUT_PROP_TILE, once its
 // hut's quest has been activated (see activateRobotHutQuest).
 function collectRobotPart(kind) {
-  if (kind === "arm") hasArmPart = true;
-  else if (kind === "leg") hasLegPart = true;
+  if (kind === "leg") hasLegPart = true;
   pushLog("You pick up " + ROBOT_PARTS[kind].label + " " + ROBOT_PARTS[kind].emoji + ".");
   renderAll();
 }
@@ -5241,6 +5320,9 @@ function handleTownTap(lx, ly) {
     if (state.inGearHut && hasTeddyBear && !hasGearPart) {
       var ty = 115 + 20; // "Give back the teddy bear:" line, then the trade row
       if (ly >= ty - 12 && ly < ty + 6) { giveHutGift("teddyBear"); return; }
+    } else if (state.inArmHut && hasTreeHeart && !hasArmPart) {
+      var hy2 = 115 + 20; // "Give back the tree's heart:" line, then the trade row
+      if (ly >= hy2 - 12 && ly < hy2 + 6) { giveHutGift("treeHeart"); return; }
     } else {
       var gy2 = 115 + 20; // "Give a gift" line, then Gold, Potion, [Weapon], [Armor]
       if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("gold"); return; }
