@@ -192,6 +192,9 @@ var legHutPos = null; // set after buildIslandOverworld() runs — the lone isla
 // fixed spot in Port Reverie (the island town), forced red instead of the
 // usual green — needs to exist before buildIslandTown() runs, below
 var RED_TREE_POS = { x: 5, y: 8 };
+// the Thief King's tornado, a few tiles off the uncharted isle — needs to
+// exist before placeIslandEntry() runs, below
+var PIRATE_TORNADO_POS = null;
 // ---------- clustered terrain generation ----------
 // Instead of rolling each tile independently (which scatters single tiles
 // everywhere), we seed a handful of "blob centers" per feature type and
@@ -873,6 +876,23 @@ var hasTreeHeart = false;
 // Reverie's grid the moment buildIslandTown() runs, so it's ready before
 // this point in the file)
 
+// ---------- the leg hut's fetch quest: armor earns you a bounty on sea
+// creatures. Defeat 10 while sailing, claim a trident, then use it (not
+// the cannon — that just bounces off) to challenge the Kraken itself as
+// a boss fight. Its skull trades for the leg. ----------
+var seaCreatureKillsForQuest = 0;
+var hasTrident = false;
+var hasKrakenSkull = false;
+var TRIDENT = { name: "Trident", dmgBonus: 9, emoji: "🔱", ranged: true, range: 6 };
+var KRAKEN_KING_DEF = { name: "Kraken King", hp: 90, dmg: [10, 22], gold: [50, 100], xp: 70 };
+
+// ---------- the Thief King's tornado quest: dive into a fixed tornado
+// out past the uncharted isle for a shark-guarded battle over his
+// pirate flag — a side quest, not part of the robot-part chain. ----------
+var thiefKingQuestStarted = false;
+var hasPirateFlag = false;
+var SHARK_DEF = { name: "Shark", hp: 18, dmg: [3, 8], gold: [5, 12], xp: 10, aquatic: true };
+
 // ---------- the Moon King's "future man" quest: once the alien quest is
 // done, he explains he built a companion — a man of the future — and
 // sent him to Earth, never to hear from him again. The 3 robot parts
@@ -918,6 +938,15 @@ function placeIslandEntry() {
   if (candidates.length === 0) return;
   var pick = candidates[Math.floor(Math.random() * candidates.length)];
   overworldGrid[pick.r][pick.c] = T.ISLAND;
+  // the Thief King's tornado lurks a few tiles off from the island itself
+  var tornadoOffsets = [[3, 3], [-3, 3], [3, -3], [-3, -3], [4, 0], [-4, 0], [0, 4], [0, -4]];
+  for (var oi = 0; oi < tornadoOffsets.length; oi++) {
+    var tr = pick.r + tornadoOffsets[oi][0], tc = pick.c + tornadoOffsets[oi][1];
+    if (overworldGrid[tr] && overworldGrid[tr][tc] === T.WATER) {
+      PIRATE_TORNADO_POS = { x: tc, y: tr };
+      break;
+    }
+  }
 }
 function farFromLand(r, c, radius) {
   for (var dr = -radius; dr <= radius; dr++) {
@@ -1428,9 +1457,11 @@ function applyHazardDamage(label) {
 }
 
 function tryOceanHazard() {
-  // wandering tornadoes: move randomly, and strike if they land on you
+  // wandering tornadoes: move randomly, and strike if they land on you.
+  // The Thief King's quest tornado is fixed in place and handled entirely
+  // by tryPirateFlagTornado() instead, so it's skipped here.
   tornadoes.forEach(function (t) {
-    if (t.screen !== state.mode) return;
+    if (t.screen !== state.mode || t.isQuestTornado) return;
     var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
     var d = dirs[Math.floor(Math.random() * dirs.length)];
     var nx = t.x + d[0], ny = t.y + d[1];
@@ -1459,6 +1490,18 @@ function tryOceanHazard() {
     }
     respawnAfterDefeat();
   }
+}
+
+// The Thief King's tornado sits at a fixed spot out past the uncharted
+// isle — sailing onto it (once he's told you about it) pulls you down
+// into a scripted shark battle instead of dealing ambient damage.
+function tryPirateFlagTornado() {
+  if (!PIRATE_TORNADO_POS || !thiefKingQuestStarted || hasPirateFlag) return;
+  if (state.x !== PIRATE_TORNADO_POS.x || state.y !== PIRATE_TORNADO_POS.y) return;
+  pushLog("-----Into the Tornado!-----");
+  pushLog("The ship is pulled down into churning water...");
+  var group = buildMonsterGroup(SHARK_DEF, true);
+  enterArena(group, state.mode, "sharkBattle");
 }
 
 // Alien encounters only happen out on the moon's surface. Each defeated
@@ -1704,8 +1747,15 @@ function activeQuestLine() {
   if (hasTeddyBear && !hasGearPart) return "Quest: Return the teddy bear 🧸 to the gear hut";
   if (armQuestActivated && !hasArmPart && !hasTreeHeart) return "Quest: Chop the red tree in Port Reverie";
   if (hasTreeHeart && !hasArmPart) return "Quest: Return the tree's heart 🫀 to the arm hut";
-  if (legQuestActivated && !hasLegPart) return "Quest: Collect the leg " + ROBOT_PARTS.leg.emoji + " left for you";
+  if (legQuestActivated && !hasLegPart && !hasTrident) {
+    return seaCreatureKillsForQuest >= 10
+      ? "Quest: Claim your trident from the leg hut"
+      : "Quest: Defeat sea creatures (" + seaCreatureKillsForQuest + "/10)";
+  }
+  if (hasTrident && !hasLegPart && !hasKrakenSkull) return "Quest: Slay the Kraken with your trident";
+  if (hasKrakenSkull && !hasLegPart) return "Quest: Return the Kraken Skull 💀 to the leg hut";
   if (hasGearPart && hasArmPart && hasLegPart && !futureManComplete) return "Quest: Bring the robot parts to the Moon King";
+  if (thiefKingQuestStarted && !hasPirateFlag) return "Quest: Sail into the tornado for the Thief King's flag";
   return null;
 }
 
@@ -2159,7 +2209,9 @@ var MONSTER_EMOJI = {
   "Yeti": "🫈",
   "Phoenix": "🐦‍🔥",
   "Merman": "🧜🏽‍♂️",
-  "Cyber Zombie": "🧟‍♂️"
+  "Cyber Zombie": "🧟‍♂️",
+  "Kraken King": "🦑",
+  "Shark": "🦈"
   // Guard, Elite Guard, Wild Horse, and Archwizard are NOT in this map —
   // they use their own drawn pixel-art sprites, not emoji (see drawMonster).
 };
@@ -2451,13 +2503,10 @@ function renderMap() {
       var lt = tileAt(lgx, lgy);
       var glyph = LANDMARK_EMOJI[lt];
       if (state.mode === "hutInterior" && lgx === HUT_PROP_TILE.x && lgy === HUT_PROP_TILE.y) {
-        // the dog sits here in plain sight regardless of quest state — the
-        // visible tell that this hut's stranger is worth a gift. A robot
-        // part, on the other hand, only appears once its own hut quest
-        // has been activated by the right gift. The gear and arm huts are
-        // the exception — their "parts" are fetch quests, not room pickups.
+        // the dog sits here in plain sight, the visible tell that this
+        // hut's stranger is worth a gift — every robot-part hut now runs
+        // its own fetch quest instead of leaving a part here to collect
         if (state.inDogHut && !hasRescuedDog) glyph = "🐕";
-        else if (state.inLegHut && legQuestActivated && !hasLegPart) glyph = ROBOT_PARTS.leg.emoji;
       }
       if (!glyph) continue;
       var lsx = MAP_INNER_X0 + lvx * TILE, lsy = MAP_INNER_Y0 + lvy * TILE;
@@ -2795,8 +2844,18 @@ function renderTownScreenOverlay() {
   } else if (townScreen === "king") {
     ctx.fillStyle = PAL.white;
     if (state.mode === "islandTown") {
-      ctx.fillText("\"Welcome, traveler.\"", 36, y); y += 20;
-      ctx.fillText("\"I have no task for thee at present.\"", 36, y); y += 20;
+      if (hasPirateFlag) {
+        ctx.fillText("\"That's my flag!\" the old pirate grins.", 36, y); y += 18;
+        ctx.fillText("\"Knew you had it in you.\"", 36, y); y += 20;
+      } else if (thiefKingQuestStarted) {
+        ctx.fillText("\"Still looking for that tornado? It's out", 36, y); y += 18;
+        ctx.fillText("there, past the harbor. Dive in if you dare.\"", 36, y); y += 20;
+      } else {
+        ctx.fillText("\"Truth is, I'm no harbor master —", 36, y); y += 18;
+        ctx.fillText("I'm the Thief King. Lost my colors to a", 36, y); y += 18;
+        ctx.fillText("tornado out past these waters.\"", 36, y); y += 18;
+        ctx.fillText("\"Sail into it, if you dare, and win it back.\"", 36, y); y += 20;
+      }
     } else if (wizardQuestComplete) {
       ctx.fillText("\"Well met, hero.\"", 36, y); y += 20;
       ctx.fillText("\"The realm still remembers your deed.\"", 36, y); y += 20;
@@ -2873,6 +2932,14 @@ function renderTownScreenOverlay() {
       ctx.fillText("Give back the tree's heart:", 36, y); y += 20;
       ctx.fillStyle = PAL.gold;
       ctx.fillText("Tree Heart 🫀  [tap H]", 36, y); y += 18;
+    } else if (state.inLegHut && hasKrakenSkull && !hasLegPart) {
+      ctx.fillText("Give back the Kraken Skull:", 36, y); y += 20;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Kraken Skull 💀  [tap K]", 36, y); y += 18;
+    } else if (state.inLegHut && legQuestActivated && !hasLegPart && !hasTrident && seaCreatureKillsForQuest >= 10) {
+      ctx.fillText("Claim your reward:", 36, y); y += 20;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Trident 🔱  [tap D]", 36, y); y += 18;
     } else {
       ctx.fillText("Give a gift to be healed:", 36, y); y += 20;
       ctx.fillText("Gold (" + Math.min(sharedGold, 20) + "g)  [tap G]", 36, y); y += 18;
@@ -3162,9 +3229,13 @@ function tryEncounter() {
   if (state.mode !== "overworld" && state.mode !== "dungeon" && state.mode !== "island") return;
   // the Archwizard's floor is quiet — no wandering monsters on level 8
   if (state.mode === "dungeon" && state.dungeonLevel === 8) return;
-  var cap = state.mode === "dungeon" ? 3 : 2;
+  // while actively hunting sea creatures for the leg hut, they come
+  // looking for you much more aggressively
+  var huntingSeaCreatures = state.sailing && legQuestActivated && !hasTrident;
+  var cap = state.mode === "dungeon" ? 3 : huntingSeaCreatures ? 4 : 2;
+  var chance = huntingSeaCreatures ? 0.12 : 0.05;
   var already = mapMonsters.filter(entityIsHere).length;
-  if (already < cap && Math.random() < 0.05) spawnMapMonster(state.mode);
+  if (already < cap && Math.random() < chance) spawnMapMonster(state.mode);
 }
 
 // ============================================================
@@ -3307,7 +3378,8 @@ function startCombatWithMonster(mapMonster, screenKey) {
 var SPECIAL_MONSTER_DEFS = [
   SEA_SERPENT_DEF, PIRATE_DEF, GUARD_DEF, WILD_HORSE_DEF, WIZARD_DEF,
   BAT_DEF, GIANT_WASP_DEF, GIANT_EAGLE_DEF, MONKEY_DEF, YETI_DEF, KRAKEN_DEF, ALIEN_DEF,
-  PHOENIX_DEF, ELITE_GUARD_DEF, ARCHWIZARD_DEF, MERMAN_DEF, CYBER_ZOMBIE_DEF
+  PHOENIX_DEF, ELITE_GUARD_DEF, ARCHWIZARD_DEF, MERMAN_DEF, CYBER_ZOMBIE_DEF,
+  KRAKEN_KING_DEF, SHARK_DEF
 ];
 function findMonsterDef(name) {
   for (var i = 0; i < MONSTER_DEFS.length; i++) {
@@ -3383,6 +3455,28 @@ function endCombatVictory() {
       pushLog("+" + bonusGold + "g bounty from the moon settlers.");
       pushLog("The Lunar Armory will now trade with you.");
     }
+  }
+  // sea-creature bounty for the leg hut — counts by encounter, not by
+  // individual monster, same convention as the alien quest above
+  if (legQuestActivated && !hasTrident) {
+    var seaCreatureNames = ["Sea Serpent", "Kraken", "Merman"];
+    var wasSeaCreatureFight = combat.monsters.some(function (m) { return seaCreatureNames.indexOf(m.baseName) !== -1; });
+    if (wasSeaCreatureFight) {
+      seaCreatureKillsForQuest += 1;
+      pushLog("Sea creature defeated! (" + Math.min(seaCreatureKillsForQuest, 10) + "/10)");
+    }
+  }
+  if (combat.kind === "krakenBoss") {
+    hasKrakenSkull = true;
+    pushLog("-----The Kraken King falls!-----");
+    pushLog("You claim its skull — a grim trophy indeed.");
+    pushLog("Received the Kraken Skull 💀!");
+  }
+  if (combat.kind === "sharkBattle") {
+    hasPirateFlag = true;
+    tornadoes = tornadoes.filter(function (t) { return !t.isQuestTornado; });
+    pushLog("-----You win the Pirate Flag!-----");
+    pushLog("The tornado dissipates, leaving calm water behind.");
   }
   if (combat.kind === "phoenix") {
     party[0].weaponBonus = Math.max(party[0].weaponBonus, FIRE_BOW.dmgBonus);
@@ -3776,6 +3870,9 @@ function sailingMove(dx, dy, facing) {
     var wrapped2 = wrapPos(nx2, ny2);
     state.x = wrapped2.x; state.y = wrapped2.y;
     moved = true;
+    // stop dead on the Thief King's tornado rather than sailing straight
+    // through it on a favorable-wind multi-tile move
+    if (PIRATE_TORNADO_POS && state.x === PIRATE_TORNADO_POS.x && state.y === PIRATE_TORNADO_POS.y) break;
   }
   if (moved) {
     pushLog(facingWord(facing) + (speed.tiles > 1 ? " (favorable wind!)" : ""));
@@ -3788,7 +3885,11 @@ function sailingMove(dx, dy, facing) {
   // wanders randomly on its own (visualized on the map), while the
   // tsunami is a one-off wave with no persistent presence.
   tryOceanHazard();
+  tryPirateFlagTornado();
 
+  // wandering sea creatures (Sea Serpent/Kraken/Merman) only ever spawn
+  // through here — sailing bypasses move()'s own tryEncounter() call
+  tryEncounter();
   tryPirateEncounter();
   stepMapMonsters();
   renderAll();
@@ -3997,7 +4098,6 @@ function move(dx, dy) {
       renderAll();
       return;
     }
-    if (state.inLegHut && legQuestActivated && !hasLegPart) { collectRobotPart("leg"); return; }
   }
   if (t === T.STABLE) { openStable(); return; }
   if (t === T.MOON_SHOP) { openMoonShop(); return; }
@@ -4408,6 +4508,8 @@ function gatherSaveData() {
     armQuestActivated: armQuestActivated, hasArmPart: hasArmPart,
     hasAxe: hasAxe, hasTreeHeart: hasTreeHeart,
     legQuestActivated: legQuestActivated, hasLegPart: hasLegPart,
+    seaCreatureKillsForQuest: seaCreatureKillsForQuest, hasTrident: hasTrident, hasKrakenSkull: hasKrakenSkull,
+    thiefKingQuestStarted: thiefKingQuestStarted, hasPirateFlag: hasPirateFlag,
     futureManComplete: futureManComplete, hasCyberRocket: hasCyberRocket,
     cyberWeaponsGiven: cyberWeaponsGiven
   };
@@ -4447,6 +4549,16 @@ function applySaveData(d) {
   hasTreeHeart = !!d.hasTreeHeart;
   legQuestActivated = !!d.legQuestActivated;
   hasLegPart = !!d.hasLegPart;
+  seaCreatureKillsForQuest = d.seaCreatureKillsForQuest || 0;
+  hasTrident = !!d.hasTrident;
+  hasKrakenSkull = !!d.hasKrakenSkull;
+  thiefKingQuestStarted = !!d.thiefKingQuestStarted;
+  hasPirateFlag = !!d.hasPirateFlag;
+  // the quest tornado isn't itself persisted (see `tornadoes`, which
+  // isn't saved at all) — re-add it here so it's still findable on load
+  if (thiefKingQuestStarted && !hasPirateFlag && PIRATE_TORNADO_POS) {
+    tornadoes.push({ x: PIRATE_TORNADO_POS.x, y: PIRATE_TORNADO_POS.y, screen: "overworld", isQuestTornado: true });
+  }
   futureManComplete = !!d.futureManComplete;
   hasCyberRocket = !!d.hasCyberRocket;
   cyberWeaponsGiven = !!d.cyberWeaponsGiven;
@@ -4604,6 +4716,18 @@ function fireCannon(dir) {
     renderAll();
     return;
   }
+  if (hitMonster.name === "Kraken") {
+    var wieldingTrident = party[0].equippedWeapon && party[0].equippedWeapon.name === TRIDENT.name;
+    if (!wieldingTrident) {
+      pushLog("The cannonball bounces harmlessly off its ancient hide!");
+      renderAll();
+      return;
+    }
+    pushLog("You hurl the trident instead — a direct hit!");
+    mapMonsters = mapMonsters.filter(function (m) { return m !== hitMonster; });
+    enterArena([makeMonsterInstance(KRAKEN_KING_DEF, 0, 0)], state.mode, "krakenBoss", "coastal");
+    return;
+  }
   // resolve as an instant, decisive kill-oriented hit: pull it straight
   // into a one-monster arena fight, already heavily damaged, so a good
   // cannon shot can end the fight in a hit or two
@@ -4748,7 +4872,20 @@ function openKing() {
   townScreen = "king";
   pushLog("-----Throne Room-----");
   if (state.mode === "islandTown") {
-    pushLog("The Harbor Master nods, but has no words for you yet.");
+    if (hasPirateFlag) {
+      pushLog("\"That's my flag!\" the old pirate grins. \"Knew you had it in you.\"");
+    } else if (thiefKingQuestStarted) {
+      pushLog("\"Still looking for that tornado? It's out there,");
+      pushLog("somewhere past the harbor. Dive in if you dare.\"");
+    } else {
+      thiefKingQuestStarted = true;
+      if (PIRATE_TORNADO_POS) {
+        tornadoes.push({ x: PIRATE_TORNADO_POS.x, y: PIRATE_TORNADO_POS.y, screen: "overworld", isQuestTornado: true });
+      }
+      pushLog("\"Truth is, I'm no harbor master — I'm the Thief King.");
+      pushLog("Lost my colors to a tornado out past these waters.");
+      pushLog("Sail into it, if you've got the nerve, and win it back.\"");
+    }
   } else if (wizardQuestComplete) {
     pushLog("\"Well met, hero. The realm still remembers your deed.\"");
   } else if (hasWizardsWand) {
@@ -4931,12 +5068,22 @@ function openHutGift() {
   pushLog("-----A Kindly Stranger-----");
   if (state.inGearHut && hasTeddyBear && !hasGearPart) {
     pushLog("\"Is that... my teddy bear?! You found him!\"");
-  } else if (state.inGearHut && gearQuestActivated && !hasTeddyBear) {
+  } else if (state.inGearHut && gearQuestActivated && !hasGearPart && !hasTeddyBear) {
     pushLog("\"Please, bring back my teddy bear from the jester's grave.\"");
   } else if (state.inArmHut && hasTreeHeart && !hasArmPart) {
     pushLog("\"You actually found it — the tree's magical heart!\"");
-  } else if (state.inArmHut && armQuestActivated && !hasTreeHeart) {
+  } else if (state.inArmHut && armQuestActivated && !hasArmPart && !hasTreeHeart) {
     pushLog("\"Bring back that tree's heart when you can.\"");
+  } else if (state.inLegHut && hasKrakenSkull && !hasLegPart) {
+    pushLog("\"Is that... the Kraken's skull?! Incredible!\"");
+  } else if (state.inLegHut && hasTrident && !hasLegPart && !hasKrakenSkull) {
+    pushLog("\"Find that Kraken and put the trident to use!\"");
+  } else if (state.inLegHut && legQuestActivated && !hasLegPart && !hasTrident) {
+    if (seaCreatureKillsForQuest >= 10) {
+      pushLog("\"You've done it! 10 sea creatures, just as I asked.\"");
+    } else {
+      pushLog("\"Keep at it — " + seaCreatureKillsForQuest + "/10 sea creatures defeated.\"");
+    }
   } else {
     pushLog("\"Times are hard. A gift, and I'll tend your wounds.\"");
   }
@@ -4959,6 +5106,27 @@ function giveHutGift(kind, itemOrIdx) {
     hasArmPart = true;
     pushLog("\"The tree's heart! Just what I needed.\" They fit it into a mechanical arm.");
     pushLog("Received a mechanical arm " + ROBOT_PARTS.arm.emoji + "!");
+    townScreen = null;
+    renderAll();
+    return;
+  }
+  if (kind === "claimTrident") {
+    if (seaCreatureKillsForQuest < 10 || hasTrident) { pushLog("You have nothing like that to give."); renderAll(); return; }
+    hasTrident = true;
+    inventory.push({ category: "weapon", item: TRIDENT });
+    pushLog("\"Well fought!\" They hand you an ancient trident.");
+    pushLog("\"Cannons won't scratch a Kraken — but this might.\"");
+    pushLog("Received the " + TRIDENT.name + " " + TRIDENT.emoji + "!");
+    townScreen = null;
+    renderAll();
+    return;
+  }
+  if (kind === "krakenSkull") {
+    if (!hasKrakenSkull || hasLegPart) { pushLog("You have nothing like that to give."); renderAll(); return; }
+    hasKrakenSkull = false;
+    hasLegPart = true;
+    pushLog("\"The Kraken's skull... you actually did it.\" They fit it into place.");
+    pushLog("Received a mechanical leg " + ROBOT_PARTS.leg.emoji + "!");
     townScreen = null;
     renderAll();
     return;
@@ -5033,19 +5201,14 @@ function activateRobotHutQuest(kind) {
   } else if (state.inLegHut && !legQuestActivated) {
     if (kind === ROBOT_PARTS.leg.giftKind) {
       legQuestActivated = true;
-      pushLog("\"Armor — perfect, actually.\" They gesture to the corner.");
-      pushLog("\"There's a mechanical leg back there, take it if you like.\"");
+      pushLog("\"Armor — perfect, actually.\" They lean in, serious now.");
+      pushLog("\"Out on the waves, sea creatures grow bolder by the");
+      pushLog("day. Defeat 10 of them, and come back — I've got");
+      pushLog("something for you.\"");
     } else {
       pushLog("\"Kind of you, but... it's armor I'm really after.\"");
     }
   }
-}
-// Called when bumping into the visible part at HUT_PROP_TILE, once its
-// hut's quest has been activated (see activateRobotHutQuest).
-function collectRobotPart(kind) {
-  if (kind === "leg") hasLegPart = true;
-  pushLog("You pick up " + ROBOT_PARTS[kind].label + " " + ROBOT_PARTS[kind].emoji + ".");
-  renderAll();
 }
 function openQuestBoy() {
   townScreen = "questBoy";
@@ -5323,6 +5486,12 @@ function handleTownTap(lx, ly) {
     } else if (state.inArmHut && hasTreeHeart && !hasArmPart) {
       var hy2 = 115 + 20; // "Give back the tree's heart:" line, then the trade row
       if (ly >= hy2 - 12 && ly < hy2 + 6) { giveHutGift("treeHeart"); return; }
+    } else if (state.inLegHut && hasKrakenSkull && !hasLegPart) {
+      var ky = 115 + 20; // "Give back the Kraken Skull:" line, then the trade row
+      if (ly >= ky - 12 && ly < ky + 6) { giveHutGift("krakenSkull"); return; }
+    } else if (state.inLegHut && legQuestActivated && !hasLegPart && !hasTrident && seaCreatureKillsForQuest >= 10) {
+      var dy = 115 + 20; // "Claim your reward:" line, then the trade row
+      if (ly >= dy - 12 && ly < dy + 6) { giveHutGift("claimTrident"); return; }
     } else {
       var gy2 = 115 + 20; // "Give a gift" line, then Gold, Potion, [Weapon], [Armor]
       if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("gold"); return; }
