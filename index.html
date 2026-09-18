@@ -1313,6 +1313,10 @@ function spawnMapMonster(screenKey) {
   }
   var mx = state.x + (Math.random() < 0.5 ? -1 : 1) * (2 + Math.floor(Math.random() * 2));
   var my = state.y + (Math.random() < 0.5 ? -1 : 1) * (2 + Math.floor(Math.random() * 2));
+  // never drop a sea creature on dry land, or a land monster in open
+  // water — if the rolled offset lands somewhere invalid, just skip this
+  // spawn attempt rather than force it onto the wrong terrain
+  if (!monsterCanEnter({ aquatic: !!def.aquatic }, tileAt(mx, my))) return;
   var level = screenKey === "dungeon" ? state.dungeonLevel : undefined;
   mapMonsters.push({ name: def.name, x: mx, y: my, screen: screenKey, level: level, aquatic: !!def.aquatic });
 }
@@ -1327,13 +1331,13 @@ function entityIsHere(e) {
 // Moves each wandering monster one step toward the player. If a monster
 // reaches the player's tile, combat begins immediately.
 // Whether a specific wandering monster can step onto a given tile type —
-// land monsters can never enter water/island tiles, only true aquatic
-// monsters (Sea Serpents) can, regardless of whether the player happens
-// to be sailing at the time.
+// land monsters can never enter water/island tiles, and aquatic monsters
+// (Sea Serpent/Kraken/Merman) can never come ashore either, regardless of
+// whether the player happens to be sailing at the time.
 function monsterCanEnter(m, t) {
   if (t === null || t === T.MOUNTAIN || t === T.WALL) return false;
   if (t === T.WATER || t === T.ISLAND) return !!m.aquatic;
-  return true;
+  return !m.aquatic;
 }
 
 function stepMapMonsters() {
@@ -3229,6 +3233,9 @@ function tryEncounter() {
   if (state.mode !== "overworld" && state.mode !== "dungeon" && state.mode !== "island") return;
   // the Archwizard's floor is quiet — no wandering monsters on level 8
   if (state.mode === "dungeon" && state.dungeonLevel === 8) return;
+  // once the trident has proven itself against the Kraken King, the seas
+  // respect the party — no more ambient sea-creature encounters at all
+  if (state.sailing && hasTrident && (hasKrakenSkull || hasLegPart)) return;
   // while actively hunting sea creatures for the leg hut, they come
   // looking for you much more aggressively
   var huntingSeaCreatures = state.sailing && legQuestActivated && !hasTrident;
@@ -3468,9 +3475,12 @@ function endCombatVictory() {
   }
   if (combat.kind === "krakenBoss") {
     hasKrakenSkull = true;
+    // word travels fast — any sea creatures still out there scatter
+    mapMonsters = mapMonsters.filter(function (m) { return !m.aquatic; });
     pushLog("-----The Kraken King falls!-----");
     pushLog("You claim its skull — a grim trophy indeed.");
     pushLog("Received the Kraken Skull 💀!");
+    pushLog("The seas grow calm — the deep respects the trident now.");
   }
   if (combat.kind === "sharkBattle") {
     hasPirateFlag = true;
