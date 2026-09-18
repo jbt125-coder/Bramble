@@ -112,7 +112,7 @@ var BOTBAR_H = 56;      // bottom party strip (2 members side by side)
 var LOG_H = 70;         // description/log text area, below everything
 var BORDER = 8;
 var COORD_GAP = 20;     // room for the "(x)(y)" readout above the map border
-var LOC_GAP = 20;       // room for the location-name banner below the map border
+var LOC_GAP = 34;       // room for the location-name banner (plus an optional active-quest line) below the map border
 
 var MAP_X0 = 6;
 var MAP_OUTER_W = LW - 12;
@@ -160,7 +160,11 @@ var T = {
   STABLE: 21, PORTAL: 22, MOON_GRASS: 23, MOON_SHOP: 24, MOON_PORTAL: 25, ROCKET: 26,
   HUT: 27, MOAI: 28, SHRINE: 29, CHURCH: 30, GARDEN_FOUNTAIN: 31, VOLCANO: 32, ASIA_CASTLE: 33,
   GRAVE: 34, BRIDGE: 35, BED: 36, MOURNER: 37, HUT_NPC: 38,
-  STAIRS_DOWN: 39, STAIRS_UP: 40, BOSS: 41
+  STAIRS_DOWN: 39, STAIRS_UP: 40, BOSS: 41, QUEST_BOY: 42, MOON_KING: 43,
+  ROBOT_KING: 44, CYBER_WALL: 45, CYBER_FLOOR: 46,
+  CYBER_DISC: 47, CYBER_PHONE: 48, CYBER_TV: 49, CYBER_ANTENNA: 50, CYBER_PAGER: 51,
+  CYBER_DIAL: 52, CYBER_SLIDER: 53, CYBER_PRINTER: 54, CYBER_CD: 55,
+  RED_TREE: 56
 };
 
 function mkMap(w, h, fill) {
@@ -177,6 +181,20 @@ var OW_W = 100, OW_H = 90;
 // the player's starting position matches the safe-zone carved at the
 // continent's center in buildOverworld() — a few tiles west of the town
 var OW_START_X = Math.floor(OW_W / 2) - 12, OW_START_Y = Math.floor(OW_H / 2);
+// positions of the 3 scattered huts, recorded as placeScatteredLandmarks()
+// runs during buildOverworld() below, so a specific hut can later be
+// designated for a quest (e.g. the dog hut)
+var hutPositions = [];
+var dogHutPos = null; // set right after buildOverworld() runs, below
+var gearHutPos = null; // ditto — the other 2 mainland huts' robot-part quests
+var armHutPos = null;
+var legHutPos = null; // set after buildIslandOverworld() runs — the lone island hut
+// fixed spot in Port Reverie (the island town), forced red instead of the
+// usual green — needs to exist before buildIslandTown() runs, below
+var RED_TREE_POS = { x: 5, y: 8 };
+// the Thief King's tornado, a few tiles off the uncharted isle — needs to
+// exist before placeIslandEntry() runs, below
+var PIRATE_TORNADO_POS = null;
 // ---------- clustered terrain generation ----------
 // Instead of rolling each tile independently (which scatters single tiles
 // everywhere), we seed a handful of "blob centers" per feature type and
@@ -305,6 +323,7 @@ function placeScatteredLandmarks(g, rand, castleR, castleC) {
         if (d < p.minDistFromCastle) continue;
       }
       g[r][c] = p.type;
+      if (p.type === T.HUT) hutPositions.push({ x: c, y: r });
       placed++;
     }
   });
@@ -451,6 +470,7 @@ function buildTown() {
   for (var sr = 9; sr < 15; sr++) g[sr][8] = T.WATER;
   g[12][8] = T.BRIDGE;
   g[11][6] = T.GARDEN_FOUNTAIN;
+  g[10][5] = T.QUEST_BOY; // a boy waiting by the fountain, looking for his lost dog
 
   // ---------- Graveyard — its own walled area, east-center, mirroring
   // the garden, with a scatter of graves ----------
@@ -561,7 +581,10 @@ function buildIslandOverworld() {
   g[midR][midC] = T.TOWN;
 
   placePortalInForest(g, rand);
-  placeOneHut(g, rand, T.GRASS, ISLAND_W, ISLAND_H, midR, midC, 10);
+  // the lone island hut hosts the leg-part quest — assigning legHutPos
+  // here (not "var") reaches the module-level global declared up near
+  // hutPositions, which by now is already initialized to null
+  legHutPos = placeOneHut(g, rand, T.GRASS, ISLAND_W, ISLAND_H, midR, midC, 10);
   return g;
 }
 
@@ -577,8 +600,9 @@ function placeOneHut(g, rand, openTile, w, h, avoidR, avoidC, minDist) {
       if (d < minDist) continue;
     }
     g[r][c] = T.HUT;
-    return;
+    return { x: c, y: r };
   }
+  return null;
 }
 
 // Hides the magic portal somewhere inside one of the island's forest
@@ -646,10 +670,20 @@ function buildIslandTown() {
   });
   g[fountainY][fountainX] = T.FOUNTAIN;
 
+  // the one magical red tree, forced onto a fixed spot so it's never left
+  // to chance by the scattered-forest RNG above
+  g[RED_TREE_POS.y][RED_TREE_POS.x] = T.RED_TREE;
+
   return g;
 }
 
 var overworldGrid = buildOverworld();
+// designate the first-placed hut as the one holding the lost dog — reuses
+// an existing hut (kept well clear of the castle) rather than adding a new one
+dogHutPos = hutPositions[0] || null;
+// the other 2 mainland huts each get their own robot-part quest
+gearHutPos = hutPositions[1] || null;
+armHutPos = hutPositions[2] || null;
 var townGrid = buildTown();
 var islandGrid = buildIslandOverworld();
 var islandTownGrid = buildIslandTown();
@@ -680,9 +714,9 @@ function buildMoonWorld() {
   g[midR][midC] = T.TOWN;
   // the return portal sits right where the player first arrives
   g[midR + 2][midC] = T.MOON_PORTAL;
-  // fixed rocket landing pad, right next to the moon's castle/town —
-  // this exact spot is where a flown-in rocket always parks, and the
-  // only place on the moon you can board one to fly home
+  // fixed rocket landing pad, right next to the moon's castle/town — this
+  // exact spot is where the Moon King's rocket always parks, and the only
+  // place on the moon you can board it to fly to Cyber World
   ROCKET_MOON_PAD = { x: midC + 2, y: midR };
   if (g[ROCKET_MOON_PAD.y][ROCKET_MOON_PAD.x] === T.MOUNTAIN) g[ROCKET_MOON_PAD.y][ROCKET_MOON_PAD.x] = T.MOON_GRASS;
   placeOneHut(g, rand, T.MOON_GRASS, MOON_W, MOON_H, midR, midC, 6);
@@ -710,11 +744,53 @@ function buildMoonTown() {
   g[h - 1][7] = T.DOOR;
   carveRoom(g, 4, 3, 6, 5, "S", 3);
   g[5][7] = T.MOON_SHOP;
+  g[5][5] = T.MOON_KING;
   return g;
 }
 
 var moonGrid = buildMoonWorld();
 var moonTownGrid = buildMoonTown();
+
+// ---------- Cyber World: reached only by the Moon King's own rocket,
+// after the "future man" robot is rebuilt. A small, walled-off region
+// styled like the inside of a giant computer chip, overrun by zombies. ----------
+var CYBER_W = 34, CYBER_H = 28;
+var CYBER_LANDING_PAD = null; // fixed {x,y} where the cyber rocket sets down, set below
+function buildCyberWorld() {
+  var g = mkMap(CYBER_W, CYBER_H, T.CYBER_FLOOR);
+  var seed = 4242;
+  function rand() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+  var isOpen = function (t) { return t === T.CYBER_FLOOR; };
+  // scattered "circuit block" obstacles, standing in for mountains
+  for (var cb = 0; cb < 6; cb++) {
+    var startRow = 2 + Math.floor(rand() * (CYBER_H - 4));
+    var startCol = 2 + Math.floor(rand() * (CYBER_W - 4));
+    growBlob(g, CYBER_W, CYBER_H, startRow, startCol, T.CYBER_WALL, 5 + Math.floor(rand() * 6), rand, isOpen);
+  }
+  var midR = Math.floor(CYBER_H / 2), midC = Math.floor(CYBER_W / 2);
+  // landing pad + the Robot King waiting right beside it, so he's the
+  // first thing you see stepping off the rocket
+  g[midR][midC] = T.CYBER_FLOOR;
+  CYBER_LANDING_PAD = { x: midC, y: midR };
+  g[midR][midC + 1] = T.ROBOT_KING;
+  // scatter the 9 distinctive tech landmarks across the chip's surface —
+  // pure flavor, same treatment as the moai/shrine/grave on Earth
+  var props = [T.CYBER_DISC, T.CYBER_PHONE, T.CYBER_TV, T.CYBER_ANTENNA, T.CYBER_PAGER,
+    T.CYBER_DIAL, T.CYBER_SLIDER, T.CYBER_PRINTER, T.CYBER_CD];
+  props.forEach(function (propType) {
+    var placed = 0, tries = 0;
+    while (placed < 2 && tries < 300) {
+      tries++;
+      var r = 2 + Math.floor(rand() * (CYBER_H - 4));
+      var c = 2 + Math.floor(rand() * (CYBER_W - 4));
+      if (g[r][c] !== T.CYBER_FLOOR) continue;
+      g[r][c] = propType;
+      placed++;
+    }
+  });
+  return g;
+}
+var cyberGrid = buildCyberWorld();
 
 // ---------- hut & church interiors — small one-room buildings you can
 // actually walk into, talk to the occupant, and give a gift ----------
@@ -756,6 +832,85 @@ var hasWizardsWand = false;
 var wizardQuestComplete = false;
 var WIZARDS_WAND = { name: "Archwizard's Wand", dmgBonus: 10, emoji: "🪄" };
 
+// ---------- hut quests: give a hut's kindly stranger anything but gold
+// and, alongside the usual healing, they may spin off a side quest ----------
+// (dogHutPos itself is declared up near hutPositions, and assigned right
+// after buildOverworld() runs, so it's ready before buildTown() needs it)
+var dogQuestStarted = false;
+var dogQuestComplete = false;
+var hasRescuedDog = false;
+var DOG_NAME = "Biscuit";
+// spot inside a hut interior where its one special prop sits — the dog in
+// the dog hut, or a robot part once that hut's own quest is activated.
+// Every hut shares one interior layout, and only one role is ever active
+// per hut, so reusing a single coordinate for all of them is safe.
+var HUT_PROP_TILE = { x: 4, y: 5 };
+
+// ---------- hut quests: build-a-robot — a specific gift (not just any
+// non-gold gift) at each of 3 other huts activates that hut's own quest;
+// the part then appears at HUT_PROP_TILE for the player to go collect ----------
+// (gearHutPos/armHutPos/legHutPos are declared up near hutPositions, and
+// assigned once their respective worlds are built, below)
+var gearQuestActivated = false, hasGearPart = false;
+var armQuestActivated = false, hasArmPart = false;
+var legQuestActivated = false, hasLegPart = false;
+var ROBOT_PARTS = {
+  gear: { emoji: "⚙️", giftKind: "potion", label: "a gear" },
+  arm: { emoji: "🦾", giftKind: "weapon", label: "a mechanical arm" },
+  leg: { emoji: "🦿", giftKind: "armor", label: "a mechanical leg" }
+};
+// ---------- the gear hut's fetch quest: a potion earns you a shovel and
+// a tip about the jester's grave, not the gear itself. Dig there for the
+// stranger's lost teddy bear, then trade it back for the gear. ----------
+var hasShovel = false;
+var hasTeddyBear = false;
+// one of buildTown()'s graveSpots, re-flavored as the jester's grave
+var JESTER_GRAVE_POS = { x: 34, y: 9 };
+
+// ---------- the arm hut's fetch quest: a weapon earns you a lumberjack's
+// axe and a tip about a magical red tree in Port Reverie. Chop it down
+// for its heart, then trade that back for the arm. ----------
+var hasAxe = false;
+var hasTreeHeart = false;
+// (RED_TREE_POS is declared up near hutPositions, and forced onto Port
+// Reverie's grid the moment buildIslandTown() runs, so it's ready before
+// this point in the file)
+
+// ---------- the leg hut's fetch quest: armor earns you a bounty on sea
+// creatures. Defeat 10 while sailing, claim a trident, then use it (not
+// the cannon — that just bounces off) to challenge the Kraken itself as
+// a boss fight. Its skull trades for the leg. ----------
+var seaCreatureKillsForQuest = 0;
+var hasTrident = false;
+var hasKrakenSkull = false;
+var TRIDENT = { name: "Trident", dmgBonus: 9, emoji: "🔱", ranged: true, range: 6 };
+var KRAKEN_KING_DEF = { name: "Kraken King", hp: 90, dmg: [10, 22], gold: [50, 100], xp: 70 };
+
+// ---------- the Thief King's tornado quest: dive into a fixed tornado
+// out past the uncharted isle for a shark-guarded battle over his
+// pirate flag — a side quest, not part of the robot-part chain. ----------
+var thiefKingQuestStarted = false;
+var hasPirateFlag = false;
+var SHARK_DEF = { name: "Shark", hp: 18, dmg: [3, 8], gold: [5, 12], xp: 10, aquatic: true };
+
+// ---------- the Moon King's "future man" quest: once the alien quest is
+// done, he explains he built a companion — a man of the future — and
+// sent him to Earth, never to hear from him again. The 3 robot parts
+// found in Earth's huts are what's left of him; bring all 3 back and
+// the Moon King rebuilds him, rewarding a rocket to Cyber World. ----------
+var futureManComplete = false;
+// true once the Moon King has granted `rocket` (see turnInRobotParts) —
+// there's only ever the one rocket, which then flies moon <-> Cyber World
+var hasCyberRocket = false;
+// The Robot King's one-time gift once you first reach Cyber World —
+// zombies (sent by the vengeful aliens) have overrun his world, and his
+// people can't bring themselves to fight, so he arms the party instead.
+var cyberWeaponsGiven = false;
+var CYBER_BLASTER = { name: "Cyber Blaster", dmgBonus: 11, emoji: "🔫", ranged: true, range: 7 };
+// named distinctly from the regular overworld "Zombie" (a much weaker,
+// unrelated common monster) since these are the aliens' shock troops
+var CYBER_ZOMBIE_DEF = { name: "Cyber Zombie", hp: 20, dmg: [3, 9], gold: [10, 20], xp: 14 };
+
 // Places the ISLAND marker at a random open-water tile on the main
 // overworld, far enough from the mainland's coastline to feel like a real
 // voyage. Falls back to any water tile if a far one can't be found.
@@ -783,6 +938,15 @@ function placeIslandEntry() {
   if (candidates.length === 0) return;
   var pick = candidates[Math.floor(Math.random() * candidates.length)];
   overworldGrid[pick.r][pick.c] = T.ISLAND;
+  // the Thief King's tornado lurks a few tiles off from the island itself
+  var tornadoOffsets = [[3, 3], [-3, 3], [3, -3], [-3, -3], [4, 0], [-4, 0], [0, 4], [0, -4]];
+  for (var oi = 0; oi < tornadoOffsets.length; oi++) {
+    var tr = pick.r + tornadoOffsets[oi][0], tc = pick.c + tornadoOffsets[oi][1];
+    if (overworldGrid[tr] && overworldGrid[tr][tc] === T.WATER) {
+      PIRATE_TORNADO_POS = { x: tc, y: tr };
+      break;
+    }
+  }
 }
 function farFromLand(r, c, radius) {
   for (var dr = -radius; dr <= radius; dr++) {
@@ -914,16 +1078,12 @@ var horse = {
 var car = { owned: false, screen: null, x: 0, y: 0 };
 var helicopter = { owned: false, screen: null, x: 0, y: 0 };
 
-// The rocket: flies you to the moon world. Unlike the horse/car, it
-// can't be "dismounted" freely wherever you like — it must always stay
-// parked right next to the moon castle, or you could get stranded there
-// with no way back. Buying one places it on the overworld near wherever
-// you bought it; flying to the moon re-parks it at the fixed moon-side
-// pad; flying back re-parks it at the original overworld pad.
+// The rocket: granted by the Moon King once the future man is rebuilt
+// (see turnInRobotParts), it flies between the moon and Cyber World.
+// Unlike the horse/car, it can't be "dismounted" freely wherever you
+// like — it always stays parked at one of the two fixed pads (see
+// ROCKET_MOON_PAD and CYBER_LANDING_PAD), so you can never be stranded.
 var rocket = { owned: false, screen: null, x: 0, y: 0 };
-// (ROCKET_MOON_PAD is declared up near the other world constants, right
-// before buildMoonWorld() runs — see below — so it's already set by the
-// time this file reaches this point.)
 
 // Only one land vehicle can be ridden at a time. state.vehicleType is
 // null | "horse" | "car" | "helicopter" — state.mounted stays true
@@ -986,6 +1146,37 @@ function roamingNpcAdjacent() {
     if (found) return found;
   }
   return null;
+}
+
+function isAdjacentToJesterGrave() {
+  if (state.mode !== "town") return false;
+  var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0], [0, 0]];
+  for (var i = 0; i < dirs.length; i++) {
+    if (state.x + dirs[i][0] === JESTER_GRAVE_POS.x && state.y + dirs[i][1] === JESTER_GRAVE_POS.y) return true;
+  }
+  return false;
+}
+function digJesterGrave() {
+  if (hasTeddyBear) { pushLog("You've already dug up what was buried here."); renderAll(); return; }
+  hasTeddyBear = true;
+  pushLog("You dig into the soft earth...");
+  pushLog("You found a small, dusty teddy bear! 🧸");
+  renderAll();
+}
+function isAdjacentToRedTree() {
+  if (state.mode !== "islandTown") return false;
+  var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0], [0, 0]];
+  for (var i = 0; i < dirs.length; i++) {
+    if (state.x + dirs[i][0] === RED_TREE_POS.x && state.y + dirs[i][1] === RED_TREE_POS.y) return true;
+  }
+  return false;
+}
+function chopRedTree() {
+  if (hasTreeHeart) { pushLog("The tree's already been felled."); renderAll(); return; }
+  hasTreeHeart = true;
+  pushLog("You swing the axe again and again...");
+  pushLog("The red tree falls, revealing a pulsing magical heart! 🫀");
+  renderAll();
 }
 
 // Called once, after every town grid has been built, to populate the
@@ -1266,9 +1457,11 @@ function applyHazardDamage(label) {
 }
 
 function tryOceanHazard() {
-  // wandering tornadoes: move randomly, and strike if they land on you
+  // wandering tornadoes: move randomly, and strike if they land on you.
+  // The Thief King's quest tornado is fixed in place and handled entirely
+  // by tryPirateFlagTornado() instead, so it's skipped here.
   tornadoes.forEach(function (t) {
-    if (t.screen !== state.mode) return;
+    if (t.screen !== state.mode || t.isQuestTornado) return;
     var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
     var d = dirs[Math.floor(Math.random() * dirs.length)];
     var nx = t.x + d[0], ny = t.y + d[1];
@@ -1299,6 +1492,18 @@ function tryOceanHazard() {
   }
 }
 
+// The Thief King's tornado sits at a fixed spot out past the uncharted
+// isle — sailing onto it (once he's told you about it) pulls you down
+// into a scripted shark battle instead of dealing ambient damage.
+function tryPirateFlagTornado() {
+  if (!PIRATE_TORNADO_POS || !thiefKingQuestStarted || hasPirateFlag) return;
+  if (state.x !== PIRATE_TORNADO_POS.x || state.y !== PIRATE_TORNADO_POS.y) return;
+  pushLog("-----Into the Tornado!-----");
+  pushLog("The ship is pulled down into churning water...");
+  var group = buildMonsterGroup(SHARK_DEF, true);
+  enterArena(group, state.mode, "sharkBattle");
+}
+
 // Alien encounters only happen out on the moon's surface. Each defeated
 // group counts toward the 3-encounter quest; once alienQuestComplete is
 // true, encounters can keep happening (they're just regular fights then).
@@ -1307,6 +1512,16 @@ function tryAlienEncounter() {
   if (Math.random() < 0.05) {
     var group = buildMonsterGroup(ALIEN_DEF, true);
     enterArena(group, state.mode, "alien");
+  }
+}
+
+// Zombies overrun Cyber World — a persistent ambient threat, not a
+// counted quest like the alien encounters (there's no "cured" state).
+function tryZombieEncounter() {
+  if (state.mode !== "cyber") return;
+  if (Math.random() < 0.06) {
+    var group = buildMonsterGroup(CYBER_ZOMBIE_DEF, true);
+    enterArena(group, state.mode, "cyberZombie");
   }
 }
 
@@ -1335,6 +1550,7 @@ function currentGrid() {
   if (state.mode === "islandTown") return islandTownGrid;
   if (state.mode === "moon") return moonGrid;
   if (state.mode === "moonTown") return moonTownGrid;
+  if (state.mode === "cyber") return cyberGrid;
   if (state.mode === "hutInterior") return hutInteriorGrid;
   if (state.mode === "churchInterior") return churchInteriorGrid;
   return overworldGrid;
@@ -1374,6 +1590,7 @@ function isWalkable(t) {
   if (t === T.MOUNTAIN) return flyingFreely; // helicopter is the only thing that can cross mountains
   if (t === T.VOLCANO) return flyingFreely; // impassable on foot, just like a mountain
   if (t === T.WALL) return false;
+  if (t === T.CYBER_WALL) return flyingFreely; // a solid chip block, same treatment as a mountain
   if (t === T.FOREST && state.mounted && state.vehicleType !== "helicopter") return false; // horses/cars can't push through forest, helicopter flies over
   return true;
 }
@@ -1491,6 +1708,14 @@ function drawMapBorder() {
   if (state.mounted) label += "  (Mounted)";
   else if (state.sailing) label += "  (Sailing)";
   ctx.fillText(label, midX, LOCLABEL_Y + 12);
+
+  // active quest line, shown just below the location banner while a quest is underway
+  var questLine = activeQuestLine();
+  if (questLine) {
+    ctx.fillStyle = PAL.gold;
+    ctx.font = "11px 'Courier New', monospace";
+    ctx.fillText(questLine, midX, LOCLABEL_Y + 27);
+  }
   ctx.textAlign = "left";
 }
 
@@ -1500,6 +1725,7 @@ function modeLabel() {
   if (state.mode === "islandTown") return "PORT REVERIE";
   if (state.mode === "moon") return "GREY MOON";
   if (state.mode === "moonTown") return "LUNA STATION";
+  if (state.mode === "cyber") return "CYBER WORLD";
   if (state.mode === "combat") return "COMBAT";
   // while actually sailing, show the live wind reading instead of the
   // place name — this is the only spot the wind system is visible outside
@@ -1507,6 +1733,30 @@ function modeLabel() {
   if (state.sailing) return wind.dir === "CALM" ? "DEAD CALM" : facingWord(wind.dir).toUpperCase() + " WIND";
   if (state.mode === "island") return "UNCHARTED ISLE";
   return "SOUTHWIND COAST";
+}
+
+// Text for the active-quest line shown under the location banner, or
+// null when no quest is currently underway.
+function activeQuestLine() {
+  if (dogQuestStarted && !dogQuestComplete) {
+    return hasRescuedDog
+      ? "Quest: Bring " + DOG_NAME + " back to the boy in Bramble"
+      : "Quest: Find the boy's lost dog, " + DOG_NAME;
+  }
+  if (gearQuestActivated && !hasGearPart && !hasTeddyBear) return "Quest: Dig up the teddy bear 🧸 by the jester's grave";
+  if (hasTeddyBear && !hasGearPart) return "Quest: Return the teddy bear 🧸 to the gear hut";
+  if (armQuestActivated && !hasArmPart && !hasTreeHeart) return "Quest: Chop the red tree in Port Reverie";
+  if (hasTreeHeart && !hasArmPart) return "Quest: Return the tree's heart 🫀 to the arm hut";
+  if (legQuestActivated && !hasLegPart && !hasTrident) {
+    return seaCreatureKillsForQuest >= 10
+      ? "Quest: Claim your trident from the leg hut"
+      : "Quest: Defeat sea creatures (" + seaCreatureKillsForQuest + "/10)";
+  }
+  if (hasTrident && !hasLegPart && !hasKrakenSkull) return "Quest: Slay the Kraken with your trident";
+  if (hasKrakenSkull && !hasLegPart) return "Quest: Return the Kraken Skull 💀 to the leg hut";
+  if (hasGearPart && hasArmPart && hasLegPart && !futureManComplete) return "Quest: Bring the robot parts to the Moon King";
+  if (thiefKingQuestStarted && !hasPirateFlag) return "Quest: Sail into the tornado for the Thief King's flag";
+  return null;
 }
 
 // ============================================================
@@ -1552,6 +1802,16 @@ function drawTile(sx, sy, size, type, gx, gy) {
     ctx.fillStyle = PAL.green;
     ctx.beginPath(); ctx.arc(cx - size * 0.15, cy - size * 0.1, size * 0.26, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(cx + size * 0.15, cy - size * 0.15, size * 0.22, 0, Math.PI * 2); ctx.fill();
+  } else if (type === T.RED_TREE) {
+    // same shape as an ordinary tree, but unmistakably red — the one
+    // magical tree hiding in Port Reverie's scattered greenery
+    px(sx, sy, size, size, PAL.black);
+    var rcx = sx + size / 2, rcy = sy + size / 2;
+    ctx.fillStyle = "#8b1a1a";
+    ctx.beginPath(); ctx.arc(rcx, rcy, size * 0.42, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = PAL.red;
+    ctx.beginPath(); ctx.arc(rcx - size * 0.15, rcy - size * 0.1, size * 0.26, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(rcx + size * 0.15, rcy - size * 0.15, size * 0.22, 0, Math.PI * 2); ctx.fill();
   } else if (type === T.MOUNTAIN) {
     px(sx, sy, size, size, PAL.black);
     ctx.fillStyle = PAL.gray;
@@ -1637,6 +1897,12 @@ function drawTile(sx, sy, size, type, gx, gy) {
     // small crown above the head
     ctx.fillStyle = PAL.yellow;
     px(sx + size * 0.42, sy + size * 0.06, size * 0.16, size * 0.08, PAL.yellow);
+  } else if (type === T.MOON_KING) {
+    px(sx, sy, size, size, "#141414");
+    drawHuman(sx + size / 2, sy + size / 2, size, "#88ddff", "S");
+    // same small crown, in a cool lunar tone
+    ctx.fillStyle = "#cde6ff";
+    px(sx + size * 0.42, sy + size * 0.06, size * 0.16, size * 0.08, "#cde6ff");
   } else if (type === T.STABLE) {
     px(sx, sy, size, size, "#141414");
     // simple stable-hand + a horse-head silhouette beside them
@@ -1681,12 +1947,44 @@ function drawTile(sx, sy, size, type, gx, gy) {
     px(sx, sy, size, size, "#1a1a22");
     drawHuman(sx + size / 2, sy + size / 2, size, "#66ccff", "S");
   } else if (type === T.HUT || type === T.MOAI || type === T.SHRINE || type === T.CHURCH ||
-             type === T.GARDEN_FOUNTAIN || type === T.ASIA_CASTLE) {
+             type === T.GARDEN_FOUNTAIN || type === T.ASIA_CASTLE || type === T.QUEST_BOY) {
     // these landmarks sit on ordinary grass — draw the grass texture
     // underneath, and let the emoji itself be drawn in a later pass
     // (see renderMap's second pass) so it can never be clipped by a
     // neighboring tile
     drawTile(sx, sy, size, T.GRASS, gx, gy);
+  } else if (type === T.ROBOT_KING) {
+    px(sx, sy, size, size, "#141414");
+    drawHuman(sx + size / 2, sy + size / 2, size, "#cccccc", "S");
+    // a small antenna instead of a crown
+    ctx.strokeStyle = "#39ff88";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx + size / 2, sy + size * 0.1); ctx.lineTo(sx + size / 2, sy - size * 0.05);
+    ctx.stroke();
+    px(sx + size * 0.46, sy - size * 0.09, size * 0.08, size * 0.08, "#39ff88");
+  } else if (type === T.CYBER_FLOOR) {
+    // a dark circuit-board floor — thin traces crossing at a solder point
+    px(sx, sy, size, size, "#0a1a12");
+    ctx.strokeStyle = "#1f6b3a";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx + size / 2, sy); ctx.lineTo(sx + size / 2, sy + size);
+    ctx.moveTo(sx, sy + size / 2); ctx.lineTo(sx + size, sy + size / 2);
+    ctx.stroke();
+    px(sx + size / 2 - 1, sy + size / 2 - 1, 2, 2, "#39ff88");
+  } else if (type === T.CYBER_WALL) {
+    // an impassable chip block — same role as a mountain
+    px(sx, sy, size, size, "#33383f");
+    ctx.strokeStyle = "#12151a";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sx + 2, sy + 2, size - 4, size - 4);
+  } else if (type === T.CYBER_DISC || type === T.CYBER_PHONE || type === T.CYBER_TV ||
+             type === T.CYBER_ANTENNA || type === T.CYBER_PAGER || type === T.CYBER_DIAL ||
+             type === T.CYBER_SLIDER || type === T.CYBER_PRINTER || type === T.CYBER_CD) {
+    // scattered tech landmarks — sit on the circuit floor, emoji drawn
+    // in the second pass, same reasoning as the Earth landmarks above
+    drawTile(sx, sy, size, T.CYBER_FLOOR, gx, gy);
   } else if (type === T.VOLCANO) {
     px(sx, sy, size, size, "#2a1a15");
   } else if (type === T.GRAVE) {
@@ -1876,6 +2174,16 @@ LANDMARK_EMOJI[T.ASIA_CASTLE] = "🏯";
 LANDMARK_EMOJI[T.GRAVE] = "🪦";
 LANDMARK_EMOJI[T.BED] = "🛏️";
 LANDMARK_EMOJI[T.MOURNER] = "🧎";
+LANDMARK_EMOJI[T.QUEST_BOY] = "🏃🏻‍♂️‍➡️";
+LANDMARK_EMOJI[T.CYBER_DISC] = "💿";
+LANDMARK_EMOJI[T.CYBER_PHONE] = "📱";
+LANDMARK_EMOJI[T.CYBER_TV] = "📺";
+LANDMARK_EMOJI[T.CYBER_ANTENNA] = "📡";
+LANDMARK_EMOJI[T.CYBER_PAGER] = "📟";
+LANDMARK_EMOJI[T.CYBER_DIAL] = "🖲️";
+LANDMARK_EMOJI[T.CYBER_SLIDER] = "🎚️";
+LANDMARK_EMOJI[T.CYBER_PRINTER] = "🖨️";
+LANDMARK_EMOJI[T.CYBER_CD] = "📀";
 
 var MONSTER_EMOJI = {
   "Orc": "👹",
@@ -1900,7 +2208,10 @@ var MONSTER_EMOJI = {
   "Monkey": "🐒",
   "Yeti": "🫈",
   "Phoenix": "🐦‍🔥",
-  "Merman": "🧜🏽‍♂️"
+  "Merman": "🧜🏽‍♂️",
+  "Cyber Zombie": "🧟‍♂️",
+  "Kraken King": "🦑",
+  "Shark": "🦈"
   // Guard, Elite Guard, Wild Horse, and Archwizard are NOT in this map —
   // they use their own drawn pixel-art sprites, not emoji (see drawMonster).
 };
@@ -2191,6 +2502,12 @@ function renderMap() {
       var lgx = state.x - half + lvx, lgy = state.y - half + lvy;
       var lt = tileAt(lgx, lgy);
       var glyph = LANDMARK_EMOJI[lt];
+      if (state.mode === "hutInterior" && lgx === HUT_PROP_TILE.x && lgy === HUT_PROP_TILE.y) {
+        // the dog sits here in plain sight, the visible tell that this
+        // hut's stranger is worth a gift — every robot-part hut now runs
+        // its own fetch quest instead of leaving a part here to collect
+        if (state.inDogHut && !hasRescuedDog) glyph = "🐕";
+      }
       if (!glyph) continue;
       var lsx = MAP_INNER_X0 + lvx * TILE, lsy = MAP_INNER_Y0 + lvy * TILE;
       drawEmojiTile(lsx, lsy, TILE, glyph);
@@ -2494,7 +2811,10 @@ function renderTownScreenOverlay() {
   var title = townScreen === "shop" ? "WEAPONSMITH" : townScreen === "armory" ? "ARMORY"
     : townScreen === "tavern" ? "TAVERN" : townScreen === "fountain" ? "FOUNTAIN"
     : townScreen === "king" ? "THRONE ROOM" : townScreen === "stable" ? "STABLE"
-    : townScreen === "moonshop" ? "LUNAR ARMORY" : townScreen === "hutGift" ? "A KINDLY STRANGER" : "HEALER";
+    : townScreen === "moonshop" ? "LUNAR ARMORY" : townScreen === "hutGift" ? "A KINDLY STRANGER"
+    : townScreen === "questBoy" ? "A BOY BY THE FOUNTAIN"
+    : townScreen === "moonKing" ? "THE MOON KING"
+    : townScreen === "robotKing" ? "THE ROBOT KING" : "HEALER";
   ctx.fillText(title, LW / 2, 90);
   ctx.textAlign = "left";
   ctx.font = "12px 'Courier New', monospace";
@@ -2524,8 +2844,18 @@ function renderTownScreenOverlay() {
   } else if (townScreen === "king") {
     ctx.fillStyle = PAL.white;
     if (state.mode === "islandTown") {
-      ctx.fillText("\"Welcome, traveler.\"", 36, y); y += 20;
-      ctx.fillText("\"I have no task for thee at present.\"", 36, y); y += 20;
+      if (hasPirateFlag) {
+        ctx.fillText("\"That's my flag!\" the old pirate grins.", 36, y); y += 18;
+        ctx.fillText("\"Knew you had it in you.\"", 36, y); y += 20;
+      } else if (thiefKingQuestStarted) {
+        ctx.fillText("\"Still looking for that tornado? It's out", 36, y); y += 18;
+        ctx.fillText("there, past the harbor. Dive in if you dare.\"", 36, y); y += 20;
+      } else {
+        ctx.fillText("\"Truth is, I'm no harbor master —", 36, y); y += 18;
+        ctx.fillText("I'm the Thief King. Lost my colors to a", 36, y); y += 18;
+        ctx.fillText("tornado out past these waters.\"", 36, y); y += 18;
+        ctx.fillText("\"Sail into it, if you dare, and win it back.\"", 36, y); y += 20;
+      }
     } else if (wizardQuestComplete) {
       ctx.fillText("\"Well met, hero.\"", 36, y); y += 20;
       ctx.fillText("\"The realm still remembers your deed.\"", 36, y); y += 20;
@@ -2594,15 +2924,76 @@ function renderTownScreenOverlay() {
     }
   } else if (townScreen === "hutGift") {
     ctx.fillStyle = PAL.white;
-    ctx.fillText("Give a gift to be healed:", 36, y); y += 20;
-    ctx.fillText("Gold (" + Math.min(sharedGold, 20) + "g)  [tap G]", 36, y); y += 18;
-    ctx.fillText("Potion (have " + inventory.filter(function (e) { return e.category === "potion"; }).length + ")  [tap P]", 36, y); y += 18;
-    if (party[0].equippedWeapon) {
-      ctx.fillText("Your " + party[0].equippedWeapon.name + "  [tap W]", 36, y); y += 18;
+    if (state.inGearHut && hasTeddyBear && !hasGearPart) {
+      ctx.fillText("Give back the teddy bear:", 36, y); y += 20;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Teddy Bear 🧸  [tap T]", 36, y); y += 18;
+    } else if (state.inArmHut && hasTreeHeart && !hasArmPart) {
+      ctx.fillText("Give back the tree's heart:", 36, y); y += 20;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Tree Heart 🫀  [tap H]", 36, y); y += 18;
+    } else if (state.inLegHut && hasKrakenSkull && !hasLegPart) {
+      ctx.fillText("Give back the Kraken Skull:", 36, y); y += 20;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Kraken Skull 💀  [tap K]", 36, y); y += 18;
+    } else if (state.inLegHut && legQuestActivated && !hasLegPart && !hasTrident && seaCreatureKillsForQuest >= 10) {
+      ctx.fillText("Claim your reward:", 36, y); y += 20;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Trident 🔱  [tap D]", 36, y); y += 18;
+    } else {
+      ctx.fillText("Give a gift to be healed:", 36, y); y += 20;
+      ctx.fillText("Gold (" + Math.min(sharedGold, 20) + "g)  [tap G]", 36, y); y += 18;
+      ctx.fillText("Potion (have " + inventory.filter(function (e) { return e.category === "potion"; }).length + ")  [tap P]", 36, y); y += 18;
+      if (party[0].equippedWeapon) {
+        ctx.fillText("Your " + party[0].equippedWeapon.name + "  [tap W]", 36, y); y += 18;
+      }
+      if (party[0].armorBonus > 0) {
+        ctx.fillText("Your armor  [tap A]", 36, y); y += 18;
+      }
     }
-    if (party[0].armorBonus > 0) {
-      ctx.fillText("Your armor  [tap A]", 36, y); y += 18;
+  } else if (townScreen === "questBoy") {
+    ctx.fillStyle = PAL.white;
+    if (dogQuestComplete) {
+      ctx.fillText("\"Thank you again for finding " + DOG_NAME + "!\"", 36, y); y += 20;
+      ctx.fillText("\"We're both so happy.\"", 36, y); y += 18;
+    } else if (hasRescuedDog) {
+      ctx.fillText("\"Is that... " + DOG_NAME + "?! You found him!\"", 36, y); y += 22;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Hand over the dog  [tap H]", 36, y); y += 18;
+    } else if (dogQuestStarted) {
+      ctx.fillText("\"Please, if you see " + DOG_NAME + ",", 36, y); y += 18;
+      ctx.fillText("bring him back. He ran off toward", 36, y); y += 18;
+      ctx.fillText("one of the huts.\"", 36, y); y += 18;
+    } else {
+      ctx.fillText("\"Have you seen my dog, " + DOG_NAME + "?", 36, y); y += 18;
+      ctx.fillText("He ran off toward one of the huts.", 36, y); y += 18;
+      ctx.fillText("Please, bring him home!\"", 36, y); y += 18;
     }
+  } else if (townScreen === "moonKing") {
+    ctx.fillStyle = PAL.white;
+    if (!alienQuestComplete) {
+      ctx.fillText("\"Prove yourself against the aliens,", 36, y); y += 18;
+      ctx.fillText("traveler.\"", 36, y); y += 18;
+    } else if (futureManComplete) {
+      ctx.fillText("\"My old friend flies true again,", 36, y); y += 18;
+      ctx.fillText("thanks to you.\"", 36, y); y += 18;
+    } else if (hasGearPart && hasArmPart && hasLegPart) {
+      ctx.fillText("\"You've found all his parts!\"", 36, y); y += 20;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Hand them over  [tap H]", 36, y); y += 18;
+    } else {
+      ctx.fillText("\"Years ago I built a companion —", 36, y); y += 18;
+      ctx.fillText("a man of the future. I sent him to", 36, y); y += 18;
+      ctx.fillText("Earth, and never heard from him again.", 36, y); y += 18;
+      ctx.fillText("If you find any trace of him...\"", 36, y); y += 18;
+    }
+  } else if (townScreen === "robotKing") {
+    ctx.fillStyle = PAL.white;
+    ctx.fillText("\"I am the one you rebuilt — a man", 36, y); y += 18;
+    ctx.fillText("of the future, sent to Earth long ago.\"", 36, y); y += 20;
+    ctx.fillText("\"Zombies, sent by the aliens, have", 36, y); y += 18;
+    ctx.fillText("overrun Cyber World. We cannot fight —", 36, y); y += 18;
+    ctx.fillText("but we've made you weapons. Use them well.\"", 36, y); y += 18;
   }
 }
 
@@ -2838,9 +3229,13 @@ function tryEncounter() {
   if (state.mode !== "overworld" && state.mode !== "dungeon" && state.mode !== "island") return;
   // the Archwizard's floor is quiet — no wandering monsters on level 8
   if (state.mode === "dungeon" && state.dungeonLevel === 8) return;
-  var cap = state.mode === "dungeon" ? 3 : 2;
+  // while actively hunting sea creatures for the leg hut, they come
+  // looking for you much more aggressively
+  var huntingSeaCreatures = state.sailing && legQuestActivated && !hasTrident;
+  var cap = state.mode === "dungeon" ? 3 : huntingSeaCreatures ? 4 : 2;
+  var chance = huntingSeaCreatures ? 0.12 : 0.05;
   var already = mapMonsters.filter(entityIsHere).length;
-  if (already < cap && Math.random() < 0.05) spawnMapMonster(state.mode);
+  if (already < cap && Math.random() < chance) spawnMapMonster(state.mode);
 }
 
 // ============================================================
@@ -2983,7 +3378,8 @@ function startCombatWithMonster(mapMonster, screenKey) {
 var SPECIAL_MONSTER_DEFS = [
   SEA_SERPENT_DEF, PIRATE_DEF, GUARD_DEF, WILD_HORSE_DEF, WIZARD_DEF,
   BAT_DEF, GIANT_WASP_DEF, GIANT_EAGLE_DEF, MONKEY_DEF, YETI_DEF, KRAKEN_DEF, ALIEN_DEF,
-  PHOENIX_DEF, ELITE_GUARD_DEF, ARCHWIZARD_DEF, MERMAN_DEF
+  PHOENIX_DEF, ELITE_GUARD_DEF, ARCHWIZARD_DEF, MERMAN_DEF, CYBER_ZOMBIE_DEF,
+  KRAKEN_KING_DEF, SHARK_DEF
 ];
 function findMonsterDef(name) {
   for (var i = 0; i < MONSTER_DEFS.length; i++) {
@@ -3059,6 +3455,28 @@ function endCombatVictory() {
       pushLog("+" + bonusGold + "g bounty from the moon settlers.");
       pushLog("The Lunar Armory will now trade with you.");
     }
+  }
+  // sea-creature bounty for the leg hut — counts by encounter, not by
+  // individual monster, same convention as the alien quest above
+  if (legQuestActivated && !hasTrident) {
+    var seaCreatureNames = ["Sea Serpent", "Kraken", "Merman"];
+    var wasSeaCreatureFight = combat.monsters.some(function (m) { return seaCreatureNames.indexOf(m.baseName) !== -1; });
+    if (wasSeaCreatureFight) {
+      seaCreatureKillsForQuest += 1;
+      pushLog("Sea creature defeated! (" + Math.min(seaCreatureKillsForQuest, 10) + "/10)");
+    }
+  }
+  if (combat.kind === "krakenBoss") {
+    hasKrakenSkull = true;
+    pushLog("-----The Kraken King falls!-----");
+    pushLog("You claim its skull — a grim trophy indeed.");
+    pushLog("Received the Kraken Skull 💀!");
+  }
+  if (combat.kind === "sharkBattle") {
+    hasPirateFlag = true;
+    tornadoes = tornadoes.filter(function (t) { return !t.isQuestTornado; });
+    pushLog("-----You win the Pirate Flag!-----");
+    pushLog("The tornado dissipates, leaving calm water behind.");
   }
   if (combat.kind === "phoenix") {
     party[0].weaponBonus = Math.max(party[0].weaponBonus, FIRE_BOW.dmgBonus);
@@ -3452,6 +3870,9 @@ function sailingMove(dx, dy, facing) {
     var wrapped2 = wrapPos(nx2, ny2);
     state.x = wrapped2.x; state.y = wrapped2.y;
     moved = true;
+    // stop dead on the Thief King's tornado rather than sailing straight
+    // through it on a favorable-wind multi-tile move
+    if (PIRATE_TORNADO_POS && state.x === PIRATE_TORNADO_POS.x && state.y === PIRATE_TORNADO_POS.y) break;
   }
   if (moved) {
     pushLog(facingWord(facing) + (speed.tiles > 1 ? " (favorable wind!)" : ""));
@@ -3464,7 +3885,11 @@ function sailingMove(dx, dy, facing) {
   // wanders randomly on its own (visualized on the map), while the
   // tsunami is a one-off wave with no persistent presence.
   tryOceanHazard();
+  tryPirateFlagTornado();
 
+  // wandering sea creatures (Sea Serpent/Kraken/Merman) only ever spawn
+  // through here — sailing bypasses move()'s own tryEncounter() call
+  tryEncounter();
   tryPirateEncounter();
   stepMapMonsters();
   renderAll();
@@ -3663,10 +4088,25 @@ function move(dx, dy) {
   if (t === T.KING) { openKing(); return; }
   if (t === T.CHEST) { openVaultChest(nx, ny); return; }
   if (t === T.HUT_NPC) { openHutGift(); return; }
+  if (t === T.QUEST_BOY) { openQuestBoy(); return; }
+  if (t === T.MOON_KING) { openMoonKing(); return; }
+  if (state.mode === "hutInterior" && nx === HUT_PROP_TILE.x && ny === HUT_PROP_TILE.y) {
+    // the dog itself is just a sighting, not something you can grab —
+    // give the hut's kindly stranger a gift (see giveHutGift) to earn it
+    if (state.inDogHut && !hasRescuedDog) {
+      pushLog("A frightened dog watches you from the corner.");
+      renderAll();
+      return;
+    }
+  }
   if (t === T.STABLE) { openStable(); return; }
   if (t === T.MOON_SHOP) { openMoonShop(); return; }
   if (t === T.HUT) {
     state.fromBuilding = { mode: state.mode, x: state.x, y: state.y };
+    state.inDogHut = state.mode === "overworld" && !!dogHutPos && nx === dogHutPos.x && ny === dogHutPos.y;
+    state.inGearHut = state.mode === "overworld" && !!gearHutPos && nx === gearHutPos.x && ny === gearHutPos.y;
+    state.inArmHut = state.mode === "overworld" && !!armHutPos && nx === armHutPos.x && ny === armHutPos.y;
+    state.inLegHut = state.mode === "island" && !!legHutPos && nx === legHutPos.x && ny === legHutPos.y;
     state.mode = "hutInterior";
     state.x = 4; state.y = 6; // just inside the door
     pushLog("You step into the hut.");
@@ -3686,7 +4126,46 @@ function move(dx, dy) {
   if (t === T.GARDEN_FOUNTAIN) { drinkGardenFountain(); return; }
   if (t === T.MOAI) { pushLog("An ancient moai gazes back at you, weathered and silent."); renderAll(); return; }
   if (t === T.SHRINE) { pushLog("A small shrine. You bow your head for a moment of quiet."); renderAll(); return; }
-  if (t === T.GRAVE) { pushLog("A worn headstone. You can't make out the name."); renderAll(); return; }
+  if (t === T.GRAVE) {
+    if (nx === JESTER_GRAVE_POS.x && ny === JESTER_GRAVE_POS.y) {
+      if (hasTeddyBear) {
+        pushLog("The jester's grave. The soil here has been freshly turned.");
+      } else if (hasShovel) {
+        pushLog("A cracked headstone: \"HERE LIES THE ROYAL JESTER —");
+        pushLog("HE WHO LAUGHED LAST.\" The ground looks freshly disturbed.");
+        pushLog("(Dig here with ACTION.)");
+      } else {
+        pushLog("A cracked headstone: \"HERE LIES THE ROYAL JESTER —");
+        pushLog("HE WHO LAUGHED LAST.\"");
+      }
+    } else {
+      pushLog("A worn headstone. You can't make out the name.");
+    }
+    renderAll();
+    return;
+  }
+  if (t === T.RED_TREE) {
+    if (hasTreeHeart) {
+      pushLog("A red stump, hollowed out where its heart once was.");
+    } else if (hasAxe) {
+      pushLog("A strange tree, its leaves a deep, unnatural red.");
+      pushLog("(Chop it down with ACTION.)");
+    } else {
+      pushLog("A strange tree, its leaves a deep, unnatural red.");
+    }
+    renderAll();
+    return;
+  }
+  if (t === T.ROBOT_KING) { openRobotKing(); return; }
+  if (t === T.CYBER_DISC) { pushLog("A shattered optical disc glints in the light."); renderAll(); return; }
+  if (t === T.CYBER_PHONE) { pushLog("An old touchscreen phone, its battery long dead."); renderAll(); return; }
+  if (t === T.CYBER_TV) { pushLog("A boxy television flickers with static."); renderAll(); return; }
+  if (t === T.CYBER_ANTENNA) { pushLog("A satellite dish tracks something far overhead."); renderAll(); return; }
+  if (t === T.CYBER_PAGER) { pushLog("A pager beeps once, then falls silent."); renderAll(); return; }
+  if (t === T.CYBER_DIAL) { pushLog("A trackball dial, worn smooth from use."); renderAll(); return; }
+  if (t === T.CYBER_SLIDER) { pushLog("A slider control, stuck halfway."); renderAll(); return; }
+  if (t === T.CYBER_PRINTER) { pushLog("An old printer hums, jammed mid-page."); renderAll(); return; }
+  if (t === T.CYBER_CD) { pushLog("A stack of dusty CDs, unlabeled."); renderAll(); return; }
   if (t === T.INNKEEPER) {
     if (sharedGold >= 10) {
       sharedGold -= 10;
@@ -3724,23 +4203,22 @@ function move(dx, dy) {
     renderAll();
     return;
   }
-  // Boarding the parked rocket: flies to the moon (if boarded on the
-  // overworld) or flies home (if boarded at the fixed moon pad) —
-  // instant travel, no direction/movement involved like the ship.
+  // Boarding the parked rocket: flies between the moon and Cyber World —
+  // instant travel, no direction/movement involved like the ship. There's
+  // only ever the one rocket, granted by the Moon King (see turnInRobotParts).
   if (rocket.owned && rocket.screen === state.mode && rocket.x === nx && rocket.y === ny) {
-    if (state.mode === "moon") {
-      state.mode = "overworld";
-      state.x = rocket.overworldX; state.y = rocket.overworldY;
-      rocket.screen = "overworld";
-      rocket.x = rocket.overworldX; rocket.y = rocket.overworldY;
-      pushLog("The rocket carries you home to the overworld.");
-    } else {
-      rocket.overworldX = rocket.x; rocket.overworldY = rocket.y; // remember where to return to
+    if (state.mode === "cyber") {
       state.mode = "moon";
       state.x = ROCKET_MOON_PAD.x; state.y = ROCKET_MOON_PAD.y;
       rocket.screen = "moon";
       rocket.x = ROCKET_MOON_PAD.x; rocket.y = ROCKET_MOON_PAD.y;
-      pushLog("The rocket blasts off for the moon!");
+      pushLog("The rocket carries you back to the moon.");
+    } else {
+      state.mode = "cyber";
+      state.x = CYBER_LANDING_PAD.x; state.y = CYBER_LANDING_PAD.y;
+      rocket.screen = "cyber";
+      rocket.x = CYBER_LANDING_PAD.x; rocket.y = CYBER_LANDING_PAD.y;
+      pushLog("The rocket blasts off for Cyber World!");
     }
     renderAll();
     return;
@@ -3833,6 +4311,8 @@ function move(dx, dy) {
   } else if (state.mode === "moon") {
     tryAlienEncounter();
     tryVolcanoBurn();
+  } else if (state.mode === "cyber") {
+    tryZombieEncounter();
   } else if (state.mode === "town" || state.mode === "islandTown") {
     stepAllRoamingEntities();
     // the tavern keeper talks to you as soon as you're next to (or bump
@@ -3887,6 +4367,12 @@ function cmdAction() {
       : npc.kind === "armory" ? "Talk to the armorer"
       : "Talk to the weaponsmith";
     choices.push({ label: npcLabel, fn: function () { talkToNpc(npc); } });
+  }
+  if (isAdjacentToJesterGrave() && hasShovel && !hasTeddyBear) {
+    choices.push({ label: "Dig at the grave", fn: digJesterGrave });
+  }
+  if (isAdjacentToRedTree() && hasAxe && !hasTreeHeart) {
+    choices.push({ label: "Chop the red tree", fn: chopRedTree });
   }
   var here = groundItemAt(state.mode, state.x, state.y);
   if (here) {
@@ -4015,7 +4501,17 @@ function gatherSaveData() {
     state: state, ship: ship, horse: horse, car: car, helicopter: helicopter, rocket: rocket,
     tavernRecruit: tavernRecruit, monsterKillCounts: monsterKillCounts, wind: wind,
     alienEncountersWon: alienEncountersWon, alienQuestComplete: alienQuestComplete,
-    hasWizardsWand: hasWizardsWand, wizardQuestComplete: wizardQuestComplete
+    hasWizardsWand: hasWizardsWand, wizardQuestComplete: wizardQuestComplete,
+    dogQuestStarted: dogQuestStarted, dogQuestComplete: dogQuestComplete, hasRescuedDog: hasRescuedDog,
+    gearQuestActivated: gearQuestActivated, hasGearPart: hasGearPart,
+    hasShovel: hasShovel, hasTeddyBear: hasTeddyBear,
+    armQuestActivated: armQuestActivated, hasArmPart: hasArmPart,
+    hasAxe: hasAxe, hasTreeHeart: hasTreeHeart,
+    legQuestActivated: legQuestActivated, hasLegPart: hasLegPart,
+    seaCreatureKillsForQuest: seaCreatureKillsForQuest, hasTrident: hasTrident, hasKrakenSkull: hasKrakenSkull,
+    thiefKingQuestStarted: thiefKingQuestStarted, hasPirateFlag: hasPirateFlag,
+    futureManComplete: futureManComplete, hasCyberRocket: hasCyberRocket,
+    cyberWeaponsGiven: cyberWeaponsGiven
   };
 }
 
@@ -4040,6 +4536,32 @@ function applySaveData(d) {
   alienQuestComplete = !!d.alienQuestComplete;
   hasWizardsWand = !!d.hasWizardsWand;
   wizardQuestComplete = !!d.wizardQuestComplete;
+  dogQuestStarted = !!d.dogQuestStarted;
+  dogQuestComplete = !!d.dogQuestComplete;
+  hasRescuedDog = !!d.hasRescuedDog;
+  gearQuestActivated = !!d.gearQuestActivated;
+  hasGearPart = !!d.hasGearPart;
+  hasShovel = !!d.hasShovel;
+  hasTeddyBear = !!d.hasTeddyBear;
+  armQuestActivated = !!d.armQuestActivated;
+  hasArmPart = !!d.hasArmPart;
+  hasAxe = !!d.hasAxe;
+  hasTreeHeart = !!d.hasTreeHeart;
+  legQuestActivated = !!d.legQuestActivated;
+  hasLegPart = !!d.hasLegPart;
+  seaCreatureKillsForQuest = d.seaCreatureKillsForQuest || 0;
+  hasTrident = !!d.hasTrident;
+  hasKrakenSkull = !!d.hasKrakenSkull;
+  thiefKingQuestStarted = !!d.thiefKingQuestStarted;
+  hasPirateFlag = !!d.hasPirateFlag;
+  // the quest tornado isn't itself persisted (see `tornadoes`, which
+  // isn't saved at all) — re-add it here so it's still findable on load
+  if (thiefKingQuestStarted && !hasPirateFlag && PIRATE_TORNADO_POS) {
+    tornadoes.push({ x: PIRATE_TORNADO_POS.x, y: PIRATE_TORNADO_POS.y, screen: "overworld", isQuestTornado: true });
+  }
+  futureManComplete = !!d.futureManComplete;
+  hasCyberRocket = !!d.hasCyberRocket;
+  cyberWeaponsGiven = !!d.cyberWeaponsGiven;
   // Old saves (from before the 8-level dungeon rework) have no
   // dungeonLevel at all. Most of the time that's harmless — it just
   // gets set to 1 the next time they walk into the dungeon tile — but a
@@ -4194,6 +4716,18 @@ function fireCannon(dir) {
     renderAll();
     return;
   }
+  if (hitMonster.name === "Kraken") {
+    var wieldingTrident = party[0].equippedWeapon && party[0].equippedWeapon.name === TRIDENT.name;
+    if (!wieldingTrident) {
+      pushLog("The cannonball bounces harmlessly off its ancient hide!");
+      renderAll();
+      return;
+    }
+    pushLog("You hurl the trident instead — a direct hit!");
+    mapMonsters = mapMonsters.filter(function (m) { return m !== hitMonster; });
+    enterArena([makeMonsterInstance(KRAKEN_KING_DEF, 0, 0)], state.mode, "krakenBoss", "coastal");
+    return;
+  }
   // resolve as an instant, decisive kill-oriented hit: pull it straight
   // into a one-monster arena fight, already heavily damaged, so a good
   // cannon shot can end the fight in a hit or two
@@ -4338,7 +4872,20 @@ function openKing() {
   townScreen = "king";
   pushLog("-----Throne Room-----");
   if (state.mode === "islandTown") {
-    pushLog("The Harbor Master nods, but has no words for you yet.");
+    if (hasPirateFlag) {
+      pushLog("\"That's my flag!\" the old pirate grins. \"Knew you had it in you.\"");
+    } else if (thiefKingQuestStarted) {
+      pushLog("\"Still looking for that tornado? It's out there,");
+      pushLog("somewhere past the harbor. Dive in if you dare.\"");
+    } else {
+      thiefKingQuestStarted = true;
+      if (PIRATE_TORNADO_POS) {
+        tornadoes.push({ x: PIRATE_TORNADO_POS.x, y: PIRATE_TORNADO_POS.y, screen: "overworld", isQuestTornado: true });
+      }
+      pushLog("\"Truth is, I'm no harbor master — I'm the Thief King.");
+      pushLog("Lost my colors to a tornado out past these waters.");
+      pushLog("Sail into it, if you've got the nerve, and win it back.\"");
+    }
   } else if (wizardQuestComplete) {
     pushLog("\"Well met, hero. The realm still remembers your deed.\"");
   } else if (hasWizardsWand) {
@@ -4366,6 +4913,60 @@ function turnInWizardsWand() {
   pushLog("-----Quest Complete!-----");
   pushLog("The King rewards you with 500 gold!");
   townScreen = null;
+  renderAll();
+}
+function openMoonKing() {
+  townScreen = "moonKing";
+  pushLog("-----The Moon King-----");
+  if (!alienQuestComplete) {
+    pushLog("\"Prove yourself against the aliens, traveler.\"");
+  } else if (futureManComplete) {
+    pushLog("\"My old friend flies true again, thanks to you.\"");
+  } else if (hasGearPart && hasArmPart && hasLegPart) {
+    pushLog("\"You've found all his parts! Let me put him back together.\"");
+  } else {
+    pushLog("\"Years ago I built a companion — a man of the future.");
+    pushLog("I sent him to Earth on an errand, and never heard");
+    pushLog("from him again. If you find any trace of him...\"");
+  }
+  renderAll();
+}
+// Turns in all 3 robot parts for the Moon King's reward — reassembles
+// the future man and grants the rocket, parked out on the moon's
+// surface (see ROCKET_MOON_PAD), to fly to Cyber World.
+function turnInRobotParts() {
+  if (!(hasGearPart && hasArmPart && hasLegPart) || futureManComplete) return;
+  futureManComplete = true;
+  hasCyberRocket = true;
+  rocket.owned = true;
+  rocket.screen = "moon";
+  rocket.x = ROCKET_MOON_PAD.x; rocket.y = ROCKET_MOON_PAD.y;
+  pushLog("-----Quest Complete!-----");
+  pushLog("The Moon King assembles the parts before your eyes.");
+  pushLog("The man of the future stirs, and speaks:");
+  pushLog("\"I am from a world beyond your time — Cyber World.");
+  pushLog("You must fly there by rocket ship to see it.\"");
+  pushLog("\"Take this,\" says the Moon King. \"A rocket built for");
+  pushLog("one more voyage. It awaits you out on the surface.\"");
+  townScreen = null;
+  renderAll();
+}
+function openRobotKing() {
+  townScreen = "robotKing";
+  pushLog("-----The Robot King-----");
+  pushLog("\"Welcome, traveler. I am the one you rebuilt —");
+  pushLog("a man of the future, sent to Earth long ago.\"");
+  pushLog("\"This is Cyber World, and it is dying. The aliens,");
+  pushLog("spiteful after their defeat, sent zombies to destroy us.");
+  pushLog("We are not built to harm — we cannot fight them.\"");
+  if (!cyberWeaponsGiven) {
+    cyberWeaponsGiven = true;
+    for (var i = 0; i < party.length; i++) inventory.push({ category: "weapon", item: CYBER_BLASTER });
+    pushLog("\"But we have made you weapons. Use them well.\"");
+    pushLog("Received " + party.length + " Cyber Blasters!");
+  } else {
+    pushLog("\"Stay sharp out there.\"");
+  }
   renderAll();
 }
 function openVaultChest(x, y) {
@@ -4465,10 +5066,71 @@ function openHealer() {
 function openHutGift() {
   townScreen = "hutGift";
   pushLog("-----A Kindly Stranger-----");
-  pushLog("\"Times are hard. A gift, and I'll tend your wounds.\"");
+  if (state.inGearHut && hasTeddyBear && !hasGearPart) {
+    pushLog("\"Is that... my teddy bear?! You found him!\"");
+  } else if (state.inGearHut && gearQuestActivated && !hasGearPart && !hasTeddyBear) {
+    pushLog("\"Please, bring back my teddy bear from the jester's grave.\"");
+  } else if (state.inArmHut && hasTreeHeart && !hasArmPart) {
+    pushLog("\"You actually found it — the tree's magical heart!\"");
+  } else if (state.inArmHut && armQuestActivated && !hasArmPart && !hasTreeHeart) {
+    pushLog("\"Bring back that tree's heart when you can.\"");
+  } else if (state.inLegHut && hasKrakenSkull && !hasLegPart) {
+    pushLog("\"Is that... the Kraken's skull?! Incredible!\"");
+  } else if (state.inLegHut && hasTrident && !hasLegPart && !hasKrakenSkull) {
+    pushLog("\"Find that Kraken and put the trident to use!\"");
+  } else if (state.inLegHut && legQuestActivated && !hasLegPart && !hasTrident) {
+    if (seaCreatureKillsForQuest >= 10) {
+      pushLog("\"You've done it! 10 sea creatures, just as I asked.\"");
+    } else {
+      pushLog("\"Keep at it — " + seaCreatureKillsForQuest + "/10 sea creatures defeated.\"");
+    }
+  } else {
+    pushLog("\"Times are hard. A gift, and I'll tend your wounds.\"");
+  }
   renderAll();
 }
 function giveHutGift(kind, itemOrIdx) {
+  if (kind === "teddyBear") {
+    if (!hasTeddyBear || hasGearPart) { pushLog("You have nothing like that to give."); renderAll(); return; }
+    hasTeddyBear = false;
+    hasGearPart = true;
+    pushLog("\"My teddy bear! Oh, thank you!\" They press a gear into your hand.");
+    pushLog("Received a gear " + ROBOT_PARTS.gear.emoji + "!");
+    townScreen = null;
+    renderAll();
+    return;
+  }
+  if (kind === "treeHeart") {
+    if (!hasTreeHeart || hasArmPart) { pushLog("You have nothing like that to give."); renderAll(); return; }
+    hasTreeHeart = false;
+    hasArmPart = true;
+    pushLog("\"The tree's heart! Just what I needed.\" They fit it into a mechanical arm.");
+    pushLog("Received a mechanical arm " + ROBOT_PARTS.arm.emoji + "!");
+    townScreen = null;
+    renderAll();
+    return;
+  }
+  if (kind === "claimTrident") {
+    if (seaCreatureKillsForQuest < 10 || hasTrident) { pushLog("You have nothing like that to give."); renderAll(); return; }
+    hasTrident = true;
+    inventory.push({ category: "weapon", item: TRIDENT });
+    pushLog("\"Well fought!\" They hand you an ancient trident.");
+    pushLog("\"Cannons won't scratch a Kraken — but this might.\"");
+    pushLog("Received the " + TRIDENT.name + " " + TRIDENT.emoji + "!");
+    townScreen = null;
+    renderAll();
+    return;
+  }
+  if (kind === "krakenSkull") {
+    if (!hasKrakenSkull || hasLegPart) { pushLog("You have nothing like that to give."); renderAll(); return; }
+    hasKrakenSkull = false;
+    hasLegPart = true;
+    pushLog("\"The Kraken's skull... you actually did it.\" They fit it into place.");
+    pushLog("Received a mechanical leg " + ROBOT_PARTS.leg.emoji + "!");
+    townScreen = null;
+    renderAll();
+    return;
+  }
   var gaveSomething = false;
   if (kind === "gold" && sharedGold > 0) {
     var amt = Math.min(sharedGold, 20);
@@ -4495,6 +5157,85 @@ function giveHutGift(kind, itemOrIdx) {
   var anyHurt = party.some(function (p) { return p.alive && p.hp < p.maxHp; });
   party.forEach(function (p) { if (p.alive) p.hp = p.maxHp; });
   pushLog(anyHurt ? "Touched, they tend your wounds. Party healed." : "Touched by the gift, though you're already well.");
+  // a gift of anything but gold earns more than healing at some huts —
+  // the stranger opens up. At the hut sheltering the lost dog, that's
+  // the reward itself: they hand the dog over. Talking to the boy is
+  // still the only thing that starts the tracked quest/story.
+  if (state.inDogHut && !hasRescuedDog) {
+    hasRescuedDog = true;
+    pushLog("\"He's been trembling in the corner for days,\" they say.");
+    pushLog("\"You've been so kind — take " + DOG_NAME + ". He'll want to go home.\"");
+  } else if (kind !== "gold") {
+    activateRobotHutQuest(kind);
+  }
+  townScreen = null;
+  renderAll();
+}
+// Each robot-part hut wants one specific kind of gift (not just any
+// non-gold one) — giving the right kind for the first time activates
+// that hut's quest and the part appears at HUT_PROP_TILE to go collect;
+// the wrong kind just hints at what they're actually after.
+function activateRobotHutQuest(kind) {
+  if (state.inGearHut && !gearQuestActivated) {
+    if (kind === ROBOT_PARTS.gear.giftKind) {
+      gearQuestActivated = true;
+      hasShovel = true;
+      pushLog("\"Ah, a potion — bless you.\" They fall quiet a moment.");
+      pushLog("\"...Actually, one more kindness? My teddy bear is");
+      pushLog("buried by the jester's grave in Bramble's graveyard.");
+      pushLog("Take this shovel and dig him up for me?\"");
+    } else {
+      pushLog("\"Kind of you, but... it's a potion I could really use.\"");
+    }
+  } else if (state.inArmHut && !armQuestActivated) {
+    if (kind === ROBOT_PARTS.arm.giftKind) {
+      armQuestActivated = true;
+      hasAxe = true;
+      pushLog("\"A weapon — that'll do nicely.\" They press a");
+      pushLog("lumberjack's axe into your hands. \"Sail to Port");
+      pushLog("Reverie and find the red tree — cut it down.");
+      pushLog("Its heart is something magical.\"");
+    } else {
+      pushLog("\"Kind of you, but... I could really use a good weapon.\"");
+    }
+  } else if (state.inLegHut && !legQuestActivated) {
+    if (kind === ROBOT_PARTS.leg.giftKind) {
+      legQuestActivated = true;
+      pushLog("\"Armor — perfect, actually.\" They lean in, serious now.");
+      pushLog("\"Out on the waves, sea creatures grow bolder by the");
+      pushLog("day. Defeat 10 of them, and come back — I've got");
+      pushLog("something for you.\"");
+    } else {
+      pushLog("\"Kind of you, but... it's armor I'm really after.\"");
+    }
+  }
+}
+function openQuestBoy() {
+  townScreen = "questBoy";
+  pushLog("-----A Boy by the Fountain-----");
+  if (dogQuestComplete) {
+    pushLog("\"Thank you again for finding " + DOG_NAME + "!\"");
+  } else if (hasRescuedDog) {
+    pushLog("\"Is that... " + DOG_NAME + "?! You found him!\"");
+  } else if (dogQuestStarted) {
+    pushLog("\"Please, if you see " + DOG_NAME + ", bring him back.");
+    pushLog("He ran off toward one of the huts.\"");
+  } else {
+    pushLog("\"Have you seen my dog, " + DOG_NAME + "?");
+    pushLog("He ran off toward one of the huts.");
+    pushLog("Please, bring him home!\"");
+    dogQuestStarted = true;
+  }
+  renderAll();
+}
+function turnInDog() {
+  if (!hasRescuedDog || dogQuestComplete) return;
+  dogQuestComplete = true;
+  var reward = 30;
+  sharedGold += reward;
+  pushLog("-----Quest Complete!-----");
+  pushLog("The boy hugs " + DOG_NAME + " tight. \"Thank you!\"");
+  pushLog("He presses " + reward + " gold into your hand.");
   townScreen = null;
   renderAll();
 }
@@ -4739,17 +5480,47 @@ function handleTownTap(lx, ly) {
       }
     }
   } else if (townScreen === "hutGift") {
-    var gy2 = 115 + 20; // "Give a gift" line, then Gold, Potion, [Weapon], [Armor]
-    if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("gold"); return; }
-    gy2 += 18;
-    if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("potion"); return; }
-    gy2 += 18;
-    if (party[0].equippedWeapon) {
-      if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("weapon"); return; }
+    if (state.inGearHut && hasTeddyBear && !hasGearPart) {
+      var ty = 115 + 20; // "Give back the teddy bear:" line, then the trade row
+      if (ly >= ty - 12 && ly < ty + 6) { giveHutGift("teddyBear"); return; }
+    } else if (state.inArmHut && hasTreeHeart && !hasArmPart) {
+      var hy2 = 115 + 20; // "Give back the tree's heart:" line, then the trade row
+      if (ly >= hy2 - 12 && ly < hy2 + 6) { giveHutGift("treeHeart"); return; }
+    } else if (state.inLegHut && hasKrakenSkull && !hasLegPart) {
+      var ky = 115 + 20; // "Give back the Kraken Skull:" line, then the trade row
+      if (ly >= ky - 12 && ly < ky + 6) { giveHutGift("krakenSkull"); return; }
+    } else if (state.inLegHut && legQuestActivated && !hasLegPart && !hasTrident && seaCreatureKillsForQuest >= 10) {
+      var dy = 115 + 20; // "Claim your reward:" line, then the trade row
+      if (ly >= dy - 12 && ly < dy + 6) { giveHutGift("claimTrident"); return; }
+    } else {
+      var gy2 = 115 + 20; // "Give a gift" line, then Gold, Potion, [Weapon], [Armor]
+      if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("gold"); return; }
       gy2 += 18;
+      if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("potion"); return; }
+      gy2 += 18;
+      if (party[0].equippedWeapon) {
+        if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("weapon"); return; }
+        gy2 += 18;
+      }
+      if (party[0].armorBonus > 0) {
+        if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("armor"); return; }
+      }
     }
-    if (party[0].armorBonus > 0) {
-      if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("armor"); return; }
+  } else if (townScreen === "questBoy") {
+    // "Hand over the dog [tap H]" only appears (and is only tappable)
+    // once the dog's been rescued and the quest isn't already turned in —
+    // see the matching render branch above for how this y is reached
+    if (hasRescuedDog && !dogQuestComplete) {
+      var by = 115 + 22; // past the "Is that... found him!" line to the hand-over row
+      if (ly >= by - 12 && ly < by + 6) { turnInDog(); return; }
+    }
+  } else if (townScreen === "moonKing") {
+    // "Hand them over [tap H]" only appears (and is only tappable) once
+    // all 3 robot parts are found and the quest isn't already turned in —
+    // see the matching render branch above for how this y is reached
+    if (alienQuestComplete && !futureManComplete && hasGearPart && hasArmPart && hasLegPart) {
+      var mky = 115 + 20; // past the "found all his parts!" line to the hand-over row
+      if (ly >= mky - 12 && ly < mky + 6) { turnInRobotParts(); return; }
     }
   }
 }
