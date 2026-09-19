@@ -3079,7 +3079,7 @@ function renderTownScreenOverlay() {
       ctx.fillText("\"Stay sharp out there.\"", 36, y); y += 20;
     }
     ctx.fillStyle = PAL.green;
-    ctx.fillText("Your party's wounds are healed.", 36, y); y += 18;
+    ctx.fillText("Your party is fully healed and revived.", 36, y); y += 18;
   }
 }
 
@@ -5491,10 +5491,13 @@ function openRobotKing() {
   } else {
     pushLog("\"Stay sharp out there.\"");
   }
-  // every visit, free of charge — same full-party heal as a paid rest,
-  // just given away by a grateful king
-  party.forEach(function (p) { if (p.alive) p.hp = p.maxHp; });
-  pushLog("The Robot King's restorative field mends your party!");
+  // every visit, free of charge — heals AND revives, unlike the paid
+  // rest/healer services, since this is the grateful king's own gift
+  var anyRevived = party.some(function (p) { return !p.alive; });
+  party.forEach(function (p) { p.alive = true; p.hp = p.maxHp; });
+  pushLog(anyRevived
+    ? "The Robot King's restorative field revives and mends your party!"
+    : "The Robot King's restorative field mends your party!");
   renderAll();
 }
 
