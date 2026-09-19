@@ -164,7 +164,7 @@ var T = {
   ROBOT_KING: 44, CYBER_WALL: 45, CYBER_FLOOR: 46,
   CYBER_DISC: 47, CYBER_PHONE: 48, CYBER_TV: 49, CYBER_ANTENNA: 50, CYBER_PAGER: 51,
   CYBER_DIAL: 52, CYBER_SLIDER: 53, CYBER_PRINTER: 54, CYBER_CD: 55,
-  RED_TREE: 56
+  RED_TREE: 56, CYBER_TOWER: 57
 };
 
 function mkMap(w, h, fill) {
@@ -756,6 +756,7 @@ var moonTownGrid = buildMoonTown();
 // styled like the inside of a giant computer chip, overrun by zombies. ----------
 var CYBER_W = 34, CYBER_H = 28;
 var CYBER_LANDING_PAD = null; // fixed {x,y} where the cyber rocket sets down, set below
+var CYBER_TOWER_POS = null;   // fixed {x,y} of the weapons-cache tower, set below
 function buildCyberWorld() {
   var g = mkMap(CYBER_W, CYBER_H, T.CYBER_FLOOR);
   var seed = 4242;
@@ -773,6 +774,16 @@ function buildCyberWorld() {
   g[midR][midC] = T.CYBER_FLOOR;
   CYBER_LANDING_PAD = { x: midC, y: midR };
   g[midR][midC + 1] = T.ROBOT_KING;
+  // the tower with the hidden weapons cache, planted in a far corner of
+  // the chip so it actually has to be found, not stumbled onto — forced
+  // open (plus its immediate neighbors) so it's never sealed in by walls
+  var towerR = 2, towerC = CYBER_W - 3;
+  [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]].forEach(function (d) {
+    var rr = towerR + d[0], cc = towerC + d[1];
+    if (rr >= 0 && rr < CYBER_H && cc >= 0 && cc < CYBER_W) g[rr][cc] = T.CYBER_FLOOR;
+  });
+  g[towerR][towerC] = T.CYBER_TOWER;
+  CYBER_TOWER_POS = { x: towerC, y: towerR };
   // scatter the 9 distinctive tech landmarks across the chip's surface —
   // pure flavor, same treatment as the moai/shrine/grave on Earth
   var props = [T.CYBER_DISC, T.CYBER_PHONE, T.CYBER_TV, T.CYBER_ANTENNA, T.CYBER_PAGER,
@@ -905,6 +916,7 @@ var hasCyberRocket = false;
 // The Robot King's one-time gift once you first reach Cyber World —
 // zombies (sent by the vengeful aliens) have overrun his world, and his
 // people can't bring themselves to fight, so he arms the party instead.
+var metRobotKing = false;
 var cyberWeaponsGiven = false;
 var CYBER_BLASTER = { name: "Cyber Blaster", dmgBonus: 11, emoji: "🔫", ranged: true, range: 7 };
 // named distinctly from the regular overworld "Zombie" (a much weaker,
@@ -1978,7 +1990,8 @@ function drawTile(sx, sy, size, type, gx, gy) {
     ctx.strokeRect(sx + 2, sy + 2, size - 4, size - 4);
   } else if (type === T.CYBER_DISC || type === T.CYBER_PHONE || type === T.CYBER_TV ||
              type === T.CYBER_ANTENNA || type === T.CYBER_PAGER || type === T.CYBER_DIAL ||
-             type === T.CYBER_SLIDER || type === T.CYBER_PRINTER || type === T.CYBER_CD) {
+             type === T.CYBER_SLIDER || type === T.CYBER_PRINTER || type === T.CYBER_CD ||
+             type === T.CYBER_TOWER) {
     // scattered tech landmarks — sit on the circuit floor, emoji drawn
     // in the second pass, same reasoning as the Earth landmarks above
     drawTile(sx, sy, size, T.CYBER_FLOOR, gx, gy);
@@ -2245,6 +2258,7 @@ LANDMARK_EMOJI[T.CYBER_DIAL] = "🖲️";
 LANDMARK_EMOJI[T.CYBER_SLIDER] = "🎚️";
 LANDMARK_EMOJI[T.CYBER_PRINTER] = "🖨️";
 LANDMARK_EMOJI[T.CYBER_CD] = "📀";
+LANDMARK_EMOJI[T.CYBER_TOWER] = "🗼";
 
 var MONSTER_EMOJI = {
   "Orc": "👹",
@@ -3054,11 +3068,18 @@ function renderTownScreenOverlay() {
     }
   } else if (townScreen === "robotKing") {
     ctx.fillStyle = PAL.white;
-    ctx.fillText("\"I am the one you rebuilt — a man", 36, y); y += 18;
-    ctx.fillText("of the future, sent to Earth long ago.\"", 36, y); y += 20;
-    ctx.fillText("\"Zombies, sent by the aliens, have", 36, y); y += 18;
-    ctx.fillText("overrun Cyber World. We cannot fight —", 36, y); y += 18;
-    ctx.fillText("but we've made you weapons. Use them well.\"", 36, y); y += 18;
+    if (!cyberWeaponsGiven) {
+      ctx.fillText("\"I am the one you rebuilt — a man", 36, y); y += 18;
+      ctx.fillText("of the future, sent to Earth long ago.\"", 36, y); y += 20;
+      ctx.fillText("\"Zombies, sent by the aliens, have", 36, y); y += 18;
+      ctx.fillText("overrun Cyber World. We cannot fight them.\"", 36, y); y += 20;
+      ctx.fillText("\"We hid weapons in the old tower.", 36, y); y += 18;
+      ctx.fillText("Find it, and make your stand.\"", 36, y); y += 18;
+    } else {
+      ctx.fillText("\"Stay sharp out there.\"", 36, y); y += 20;
+    }
+    ctx.fillStyle = PAL.green;
+    ctx.fillText("Your party's wounds are healed.", 36, y); y += 18;
   }
 }
 
@@ -4228,6 +4249,7 @@ function move(dx, dy) {
     return;
   }
   if (t === T.ROBOT_KING) { openRobotKing(); return; }
+  if (t === T.CYBER_TOWER) { openCyberTower(); return; }
   if (t === T.CYBER_DISC) { pushLog("A shattered optical disc glints in the light."); renderAll(); return; }
   if (t === T.CYBER_PHONE) { pushLog("An old touchscreen phone, its battery long dead."); renderAll(); return; }
   if (t === T.CYBER_TV) { pushLog("A boxy television flickers with static."); renderAll(); return; }
@@ -4581,7 +4603,7 @@ function gatherSaveData() {
     seaCreatureKillsForQuest: seaCreatureKillsForQuest, hasTrident: hasTrident, hasKrakenSkull: hasKrakenSkull,
     thiefKingQuestStarted: thiefKingQuestStarted, hasPirateFlag: hasPirateFlag,
     futureManComplete: futureManComplete, hasCyberRocket: hasCyberRocket,
-    cyberWeaponsGiven: cyberWeaponsGiven
+    metRobotKing: metRobotKing, cyberWeaponsGiven: cyberWeaponsGiven
   };
 }
 
@@ -4631,6 +4653,7 @@ function applySaveData(d) {
   }
   futureManComplete = !!d.futureManComplete;
   hasCyberRocket = !!d.hasCyberRocket;
+  metRobotKing = !!d.metRobotKing;
   cyberWeaponsGiven = !!d.cyberWeaponsGiven;
   // Old saves (from before the 8-level dungeon rework) have no
   // dungeonLevel at all. Most of the time that's harmless — it just
@@ -5453,19 +5476,46 @@ function turnInRobotParts() {
 function openRobotKing() {
   townScreen = "robotKing";
   pushLog("-----The Robot King-----");
-  pushLog("\"Welcome, traveler. I am the one you rebuilt —");
-  pushLog("a man of the future, sent to Earth long ago.\"");
-  pushLog("\"This is Cyber World, and it is dying. The aliens,");
-  pushLog("spiteful after their defeat, sent zombies to destroy us.");
-  pushLog("We are not built to harm — we cannot fight them.\"");
-  if (!cyberWeaponsGiven) {
-    cyberWeaponsGiven = true;
-    for (var i = 0; i < party.length; i++) inventory.push({ category: "weapon", item: CYBER_BLASTER });
-    pushLog("\"But we have made you weapons. Use them well.\"");
-    pushLog("Received " + party.length + " Cyber Blasters!");
+  if (!metRobotKing) {
+    metRobotKing = true;
+    pushLog("\"Welcome, traveler. I am the one you rebuilt —");
+    pushLog("a man of the future, sent to Earth long ago.\"");
+    pushLog("\"This is Cyber World, and it is dying. The aliens,");
+    pushLog("spiteful after their defeat, sent zombies to destroy us.");
+    pushLog("We are not built to harm — we cannot fight them.\"");
+    pushLog("\"Long ago we hid weapons in the old tower for a moment");
+    pushLog("like this. Find the tower — your party can arm themselves");
+    pushLog("there and make a stand.\"");
+  } else if (!cyberWeaponsGiven) {
+    pushLog("\"Find the tower — your party can arm themselves there.\"");
   } else {
     pushLog("\"Stay sharp out there.\"");
   }
+  // every visit, free of charge — same full-party heal as a paid rest,
+  // just given away by a grateful king
+  party.forEach(function (p) { if (p.alive) p.hp = p.maxHp; });
+  pushLog("The Robot King's restorative field mends your party!");
+  renderAll();
+}
+
+// The tower's hidden weapons cache — a one-time find that arms the whole
+// party with Cyber Blasters and immediately throws them into a fight
+// against the zombies drawn by the commotion, literally "bringing the
+// weapons out" to help. Revisiting afterward is just flavor.
+function openCyberTower() {
+  if (!cyberWeaponsGiven) {
+    cyberWeaponsGiven = true;
+    pushLog("-----The Tower-----");
+    pushLog("A hidden cache built into the tower's base. Your party");
+    pushLog("draws out the Cyber Blasters kept here for this moment!");
+    for (var i = 0; i < party.length; i++) inventory.push({ category: "weapon", item: CYBER_BLASTER });
+    pushLog("Received " + party.length + " Cyber Blasters!");
+    pushLog("The noise draws zombies straight to you!");
+    var group = buildMonsterGroup(CYBER_ZOMBIE_DEF, true);
+    enterArena(group, state.mode, "cyberTower");
+    return;
+  }
+  pushLog("The tower's weapons cache stands empty now.");
   renderAll();
 }
 function openVaultChest(x, y) {
