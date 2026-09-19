@@ -164,7 +164,7 @@ var T = {
   ROBOT_KING: 44, CYBER_WALL: 45, CYBER_FLOOR: 46,
   CYBER_DISC: 47, CYBER_PHONE: 48, CYBER_TV: 49, CYBER_ANTENNA: 50, CYBER_PAGER: 51,
   CYBER_DIAL: 52, CYBER_SLIDER: 53, CYBER_PRINTER: 54, CYBER_CD: 55,
-  RED_TREE: 56
+  RED_TREE: 56, CYBER_TOWER: 57
 };
 
 function mkMap(w, h, fill) {
@@ -756,6 +756,7 @@ var moonTownGrid = buildMoonTown();
 // styled like the inside of a giant computer chip, overrun by zombies. ----------
 var CYBER_W = 34, CYBER_H = 28;
 var CYBER_LANDING_PAD = null; // fixed {x,y} where the cyber rocket sets down, set below
+var CYBER_TOWER_POS = null;   // fixed {x,y} of the weapons-cache tower, set below
 function buildCyberWorld() {
   var g = mkMap(CYBER_W, CYBER_H, T.CYBER_FLOOR);
   var seed = 4242;
@@ -773,6 +774,16 @@ function buildCyberWorld() {
   g[midR][midC] = T.CYBER_FLOOR;
   CYBER_LANDING_PAD = { x: midC, y: midR };
   g[midR][midC + 1] = T.ROBOT_KING;
+  // the tower with the hidden weapons cache, planted in a far corner of
+  // the chip so it actually has to be found, not stumbled onto — forced
+  // open (plus its immediate neighbors) so it's never sealed in by walls
+  var towerR = 2, towerC = CYBER_W - 3;
+  [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]].forEach(function (d) {
+    var rr = towerR + d[0], cc = towerC + d[1];
+    if (rr >= 0 && rr < CYBER_H && cc >= 0 && cc < CYBER_W) g[rr][cc] = T.CYBER_FLOOR;
+  });
+  g[towerR][towerC] = T.CYBER_TOWER;
+  CYBER_TOWER_POS = { x: towerC, y: towerR };
   // scatter the 9 distinctive tech landmarks across the chip's surface —
   // pure flavor, same treatment as the moai/shrine/grave on Earth
   var props = [T.CYBER_DISC, T.CYBER_PHONE, T.CYBER_TV, T.CYBER_ANTENNA, T.CYBER_PAGER,
@@ -905,6 +916,7 @@ var hasCyberRocket = false;
 // The Robot King's one-time gift once you first reach Cyber World —
 // zombies (sent by the vengeful aliens) have overrun his world, and his
 // people can't bring themselves to fight, so he arms the party instead.
+var metRobotKing = false;
 var cyberWeaponsGiven = false;
 var CYBER_BLASTER = { name: "Cyber Blaster", dmgBonus: 11, emoji: "🔫", ranged: true, range: 7 };
 // named distinctly from the regular overworld "Zombie" (a much weaker,
@@ -1731,6 +1743,7 @@ function modeLabel() {
   if (state.mode === "moonTown") return "LUNA STATION";
   if (state.mode === "cyber") return "CYBER WORLD";
   if (state.mode === "combat") return "COMBAT";
+  if (state.mode === "zombieHorde") return "TOWER SIEGE";
   // while actually sailing, show the live wind reading instead of the
   // place name — this is the only spot the wind system is visible outside
   // the log, so it should reflect `wind.dir`, not a static place name
@@ -1978,7 +1991,8 @@ function drawTile(sx, sy, size, type, gx, gy) {
     ctx.strokeRect(sx + 2, sy + 2, size - 4, size - 4);
   } else if (type === T.CYBER_DISC || type === T.CYBER_PHONE || type === T.CYBER_TV ||
              type === T.CYBER_ANTENNA || type === T.CYBER_PAGER || type === T.CYBER_DIAL ||
-             type === T.CYBER_SLIDER || type === T.CYBER_PRINTER || type === T.CYBER_CD) {
+             type === T.CYBER_SLIDER || type === T.CYBER_PRINTER || type === T.CYBER_CD ||
+             type === T.CYBER_TOWER) {
     // scattered tech landmarks — sit on the circuit floor, emoji drawn
     // in the second pass, same reasoning as the Earth landmarks above
     drawTile(sx, sy, size, T.CYBER_FLOOR, gx, gy);
@@ -2245,6 +2259,7 @@ LANDMARK_EMOJI[T.CYBER_DIAL] = "🖲️";
 LANDMARK_EMOJI[T.CYBER_SLIDER] = "🎚️";
 LANDMARK_EMOJI[T.CYBER_PRINTER] = "🖨️";
 LANDMARK_EMOJI[T.CYBER_CD] = "📀";
+LANDMARK_EMOJI[T.CYBER_TOWER] = "🗼";
 
 var MONSTER_EMOJI = {
   "Orc": "👹",
@@ -2725,6 +2740,8 @@ function renderAll() {
     renderCombatScreen();
   } else if (state.mode === "spaceflight") {
     renderSpaceflightScreen();
+  } else if (state.mode === "zombieHorde") {
+    renderHordeScreen();
   } else {
     renderTopBar();
     drawMapBorder();
@@ -3054,11 +3071,18 @@ function renderTownScreenOverlay() {
     }
   } else if (townScreen === "robotKing") {
     ctx.fillStyle = PAL.white;
-    ctx.fillText("\"I am the one you rebuilt — a man", 36, y); y += 18;
-    ctx.fillText("of the future, sent to Earth long ago.\"", 36, y); y += 20;
-    ctx.fillText("\"Zombies, sent by the aliens, have", 36, y); y += 18;
-    ctx.fillText("overrun Cyber World. We cannot fight —", 36, y); y += 18;
-    ctx.fillText("but we've made you weapons. Use them well.\"", 36, y); y += 18;
+    if (!cyberWeaponsGiven) {
+      ctx.fillText("\"I am the one you rebuilt — a man", 36, y); y += 18;
+      ctx.fillText("of the future, sent to Earth long ago.\"", 36, y); y += 20;
+      ctx.fillText("\"Zombies, sent by the aliens, have", 36, y); y += 18;
+      ctx.fillText("overrun Cyber World. We cannot fight them.\"", 36, y); y += 20;
+      ctx.fillText("\"We hid weapons in the old tower.", 36, y); y += 18;
+      ctx.fillText("Find it, and make your stand.\"", 36, y); y += 18;
+    } else {
+      ctx.fillText("\"Stay sharp out there.\"", 36, y); y += 20;
+    }
+    ctx.fillStyle = PAL.green;
+    ctx.fillText("Your party is fully healed and revived.", 36, y); y += 18;
   }
 }
 
@@ -3991,7 +4015,7 @@ function findIslandArrivalSpot() {
 }
 
 function move(dx, dy) {
-  if (state.mode === "combat" || state.mode === "spaceflight" || townScreen || awaitingCannonDirection || confirmingCyberDrive) return;
+  if (state.mode === "combat" || state.mode === "spaceflight" || state.mode === "zombieHorde" || townScreen || awaitingCannonDirection || confirmingCyberDrive) return;
   var facing = dx === -1 ? "W" : dx === 1 ? "E" : dy === -1 ? "N" : dy === 1 ? "S" : state.facing;
   state.facing = facing;
 
@@ -4228,6 +4252,7 @@ function move(dx, dy) {
     return;
   }
   if (t === T.ROBOT_KING) { openRobotKing(); return; }
+  if (t === T.CYBER_TOWER) { openCyberTower(); return; }
   if (t === T.CYBER_DISC) { pushLog("A shattered optical disc glints in the light."); renderAll(); return; }
   if (t === T.CYBER_PHONE) { pushLog("An old touchscreen phone, its battery long dead."); renderAll(); return; }
   if (t === T.CYBER_TV) { pushLog("A boxy television flickers with static."); renderAll(); return; }
@@ -4540,7 +4565,7 @@ function cmdCast() {
 }
 
 function cmdMenu() {
-  if (townScreen || confirmingRun || characterSheetIndex !== null || state.mode === "spaceflight") return;
+  if (townScreen || confirmingRun || characterSheetIndex !== null || state.mode === "spaceflight" || state.mode === "zombieHorde") return;
   menuScreen = "main";
   renderAll();
 }
@@ -4581,7 +4606,7 @@ function gatherSaveData() {
     seaCreatureKillsForQuest: seaCreatureKillsForQuest, hasTrident: hasTrident, hasKrakenSkull: hasKrakenSkull,
     thiefKingQuestStarted: thiefKingQuestStarted, hasPirateFlag: hasPirateFlag,
     futureManComplete: futureManComplete, hasCyberRocket: hasCyberRocket,
-    cyberWeaponsGiven: cyberWeaponsGiven
+    metRobotKing: metRobotKing, cyberWeaponsGiven: cyberWeaponsGiven
   };
 }
 
@@ -4631,6 +4656,7 @@ function applySaveData(d) {
   }
   futureManComplete = !!d.futureManComplete;
   hasCyberRocket = !!d.hasCyberRocket;
+  metRobotKing = !!d.metRobotKing;
   cyberWeaponsGiven = !!d.cyberWeaponsGiven;
   // Old saves (from before the 8-level dungeon rework) have no
   // dungeonLevel at all. Most of the time that's harmless — it just
@@ -4744,7 +4770,10 @@ var awaitingShotDirection = false; // same idea, but for the Bow/Boomerang insid
 
 function cmdFire() {
   if (townScreen || confirmingRun) return;
-  if (state.mode === "spaceflight") { spaceFire(); return; }
+  // during the space-flight mini-game, firing is continuous/hold-based
+  // (see spaceSetHeld + the FIRE button's own pointerdown/up), not a
+  // one-shot click through here
+  if (state.mode === "spaceflight") return;
   if (!state.sailing || state.mode === "combat") { pushLog("No cannon to fire here."); renderAll(); return; }
   awaitingCannonDirection = true;
   pushLog("Fire! Choose a direction (arrow keys).");
@@ -4866,16 +4895,28 @@ var spaceship = null;      // { x, y, angle, vx, vy, thrustFlashUntil, hitFlashU
 var spaceAsteroids = [];
 var spaceBullets = [];
 var spaceStars = [];
-var spaceTimeLeft = 0;
+var spaceCam = { x: 0, y: 0 };
+var spacePlanet = null;         // { x, y, r } — the Cyber Planet, somewhere out in the world to find
+var spaceMeteorsDestroyed = 0;
+var SPACE_METEOR_GOAL = 20;
+var spaceReachedPlanet = false;
+var spaceElapsed = 0;
+var SPACEFLIGHT_MAX_MS = 90000; // safety net only — never a fail state, just stops an endlessly lost run
 var spaceRunning = false;
 var lastSpaceTick = 0;
 var spaceLastFire = 0;
-var SPACEFLIGHT_MS = 13000;
-var SHIP_TURN = 0.32;
-var SHIP_THRUST = 0.9;
-var SHIP_DRAG = 0.985;
-var SHIP_MAX_SPEED = 4.2;
-var SPACE_FIRE_COOLDOWN_MS = 220;
+var SPACE_WORLD_W = 1600, SPACE_WORLD_H = 2000; // bigger than the screen — you fly around in it to find the planet
+var SPACE_MIN_ASTEROIDS = 10;
+// Controls mirror the reference space-ranger game: turning/thrusting/firing
+// are all continuous while held (keyboard or the on-screen D-pad/FIRE
+// button), not one tap = one action.
+var spaceKeysHeld = { left: false, right: false, thrust: false, fire: false };
+var SHIP_TURN_RATE = 0.065;    // rad per 16.67ms frame, continuous while held
+var SHIP_THRUST_RATE = 0.22;   // speed added per 16.67ms frame, continuous while held
+var SHIP_DRAG = 0.987;
+var SHIP_MAX_SPEED = 6.5;
+var SPACE_FIRE_COOLDOWN_MS = 260;
+var SPACE_BULLET_SPEED = 9;
 
 function renderCyberDriveConfirmDialog() {
   var r = runConfirmRects();
@@ -4953,15 +4994,31 @@ function renderCyberFlash() {
 }
 
 function initSpaceflightState() {
-  spaceship = { x: LW / 2, y: LH - 60, angle: -Math.PI / 2, vx: 0, vy: 0, thrustFlashUntil: 0, hitFlashUntil: 0 };
+  spaceship = { x: SPACE_WORLD_W / 2, y: SPACE_WORLD_H - 150, angle: -Math.PI / 2, vx: 0, vy: 0, thrustFlashUntil: 0, hitFlashUntil: 0 };
+  spaceMeteorsDestroyed = 0;
+  spaceReachedPlanet = false;
+  spaceElapsed = 0;
+  spaceKeysHeld = { left: false, right: false, thrust: false, fire: false };
+
+  // the planet is placed far from the ship's start, somewhere in the
+  // world — you have to actually go find it, not just sit and wait
+  var margin = 140, px_, py_, tries = 0;
+  do {
+    px_ = margin + Math.random() * (SPACE_WORLD_W - margin * 2);
+    py_ = margin + Math.random() * (SPACE_WORLD_H - margin * 2);
+    tries++;
+  } while (Math.hypot(px_ - spaceship.x, py_ - spaceship.y) < 700 && tries < 50);
+  spacePlanet = { x: px_, y: py_, r: 55 };
+
   spaceAsteroids = [];
-  for (var i = 0; i < 7; i++) spaceAsteroids.push(makeSpaceAsteroid());
+  for (var i = 0; i < 14; i++) spaceAsteroids.push(makeSpaceAsteroid());
   spaceBullets = [];
-  spaceTimeLeft = SPACEFLIGHT_MS;
+
   spaceStars = [];
-  for (var s = 0; s < 40; s++) {
-    spaceStars.push({ x: Math.random() * LW, y: Math.random() * LH, r: Math.random() < 0.2 ? 2 : 1 });
+  for (var s = 0; s < 160; s++) {
+    spaceStars.push({ x: Math.random() * SPACE_WORLD_W, y: Math.random() * SPACE_WORLD_H, r: Math.random() < 0.15 ? 2 : 1 });
   }
+  spaceCam.x = spaceship.x; spaceCam.y = spaceship.y;
 }
 
 function makeSpaceAsteroid(size) {
@@ -4971,42 +5028,33 @@ function makeSpaceAsteroid(size) {
   for (var j = 0; j < 8; j++) jag.push(0.75 + Math.random() * 0.4);
   var ang = Math.random() * Math.PI * 2;
   var spd = 0.3 + Math.random() * 0.5;
+  var x, y, tries = 0;
+  do {
+    x = Math.random() * SPACE_WORLD_W;
+    y = Math.random() * SPACE_WORLD_H;
+    tries++;
+  } while (spaceship && Math.hypot(x - spaceship.x, y - spaceship.y) < 150 && tries < 20);
   return {
-    x: Math.random() * LW, y: Math.random() * (LH * 0.6),
+    x: x, y: y,
     vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
     r: r, size: size, jag: jag, spin: (Math.random() - 0.5) * 0.02, rot: 0
   };
 }
 
-function spaceTurnLeft() { if (state.mode === "spaceflight" && spaceship) spaceship.angle -= SHIP_TURN; }
-function spaceTurnRight() { if (state.mode === "spaceflight" && spaceship) spaceship.angle += SHIP_TURN; }
-
-function spaceThrust() {
-  if (state.mode !== "spaceflight" || !spaceship) return;
-  spaceship.vx += Math.cos(spaceship.angle) * SHIP_THRUST;
-  spaceship.vy += Math.sin(spaceship.angle) * SHIP_THRUST;
-  spaceship.thrustFlashUntil = performance.now() + 200;
-}
-
-function spaceFire() {
-  if (state.mode !== "spaceflight" || !spaceship) return;
-  var now = performance.now();
-  if (now - spaceLastFire < SPACE_FIRE_COOLDOWN_MS) return;
-  spaceLastFire = now;
-  spaceBullets.push({
-    x: spaceship.x + Math.cos(spaceship.angle) * 14,
-    y: spaceship.y + Math.sin(spaceship.angle) * 14,
-    vx: Math.cos(spaceship.angle) * 7 + spaceship.vx,
-    vy: Math.sin(spaceship.angle) * 7 + spaceship.vy,
-    startedAt: now
-  });
+// Continuous hold-based input, set by keydown/keyup and by
+// pointerdown/pointerup on the D-pad/FIRE button — read every physics
+// frame in spaceflightTick, same model as the reference game's own
+// keys/btn -> turnLeft/turnRight/thrustOn/fireOn scheme.
+function spaceSetHeld(key, val) {
+  if (state.mode !== "spaceflight") return;
+  spaceKeysHeld[key] = val;
 }
 
 function enterSpaceflight() {
   state.mode = "spaceflight";
   spaceRunning = true;
   lastSpaceTick = performance.now();
-  pushLog("You blast off into the void toward Cyber World!");
+  pushLog("You blast off into the void! Find the Cyber Planet and destroy 20 meteorites.");
   requestAnimationFrame(spaceflightTick);
 }
 
@@ -5014,24 +5062,42 @@ function spaceflightTick(now) {
   if (!spaceRunning) return;
   var dt = Math.min(now - lastSpaceTick, 50);
   lastSpaceTick = now;
-  spaceTimeLeft -= dt;
+  spaceElapsed += dt;
+
+  if (spaceKeysHeld.left) spaceship.angle -= SHIP_TURN_RATE * (dt / 16.67);
+  if (spaceKeysHeld.right) spaceship.angle += SHIP_TURN_RATE * (dt / 16.67);
+  if (spaceKeysHeld.thrust) {
+    spaceship.vx += Math.cos(spaceship.angle) * SHIP_THRUST_RATE * (dt / 16.67);
+    spaceship.vy += Math.sin(spaceship.angle) * SHIP_THRUST_RATE * (dt / 16.67);
+    spaceship.thrustFlashUntil = now + 150;
+  }
+  if (spaceKeysHeld.fire && now - spaceLastFire >= SPACE_FIRE_COOLDOWN_MS) {
+    spaceLastFire = now;
+    spaceBullets.push({
+      x: spaceship.x + Math.cos(spaceship.angle) * 14,
+      y: spaceship.y + Math.sin(spaceship.angle) * 14,
+      vx: Math.cos(spaceship.angle) * SPACE_BULLET_SPEED + spaceship.vx,
+      vy: Math.sin(spaceship.angle) * SPACE_BULLET_SPEED + spaceship.vy,
+      startedAt: now
+    });
+  }
 
   spaceship.vx *= SHIP_DRAG; spaceship.vy *= SHIP_DRAG;
   var sp = Math.sqrt(spaceship.vx * spaceship.vx + spaceship.vy * spaceship.vy);
   if (sp > SHIP_MAX_SPEED) { spaceship.vx = spaceship.vx / sp * SHIP_MAX_SPEED; spaceship.vy = spaceship.vy / sp * SHIP_MAX_SPEED; }
   spaceship.x += spaceship.vx * (dt / 16.67);
   spaceship.y += spaceship.vy * (dt / 16.67);
-  if (spaceship.x < 0) spaceship.x += LW; else if (spaceship.x > LW) spaceship.x -= LW;
-  if (spaceship.y < 0) spaceship.y += LH; else if (spaceship.y > LH) spaceship.y -= LH;
+  spaceship.x = Math.max(0, Math.min(SPACE_WORLD_W, spaceship.x));
+  spaceship.y = Math.max(0, Math.min(SPACE_WORLD_H, spaceship.y));
 
   spaceAsteroids.forEach(function (a) {
     a.x += a.vx * (dt / 16.67); a.y += a.vy * (dt / 16.67);
     a.rot += a.spin * dt;
-    if (a.x < -a.r) a.x = LW + a.r; else if (a.x > LW + a.r) a.x = -a.r;
-    if (a.y < -a.r) a.y = LH + a.r; else if (a.y > LH + a.r) a.y = -a.r;
+    if (a.x < -a.r) a.x = SPACE_WORLD_W + a.r; else if (a.x > SPACE_WORLD_W + a.r) a.x = -a.r;
+    if (a.y < -a.r) a.y = SPACE_WORLD_H + a.r; else if (a.y > SPACE_WORLD_H + a.r) a.y = -a.r;
   });
 
-  spaceBullets = spaceBullets.filter(function (b) { return now - b.startedAt < 900; });
+  spaceBullets = spaceBullets.filter(function (b) { return now - b.startedAt < 1100; });
   spaceBullets.forEach(function (b) {
     b.x += b.vx * (dt / 16.67); b.y += b.vy * (dt / 16.67);
   });
@@ -5044,6 +5110,10 @@ function spaceflightTick(now) {
       if (dx * dx + dy * dy < a2.r * a2.r) {
         spaceBullets.splice(bi, 1);
         breakSpaceAsteroid(ai);
+        spaceMeteorsDestroyed++;
+        if (spaceMeteorsDestroyed === SPACE_METEOR_GOAL) {
+          pushLog(spaceReachedPlanet ? "20 meteorites destroyed! Preparing to land..." : "20 meteorites destroyed! Now find the Cyber Planet!");
+        }
         break;
       }
     }
@@ -5064,11 +5134,22 @@ function spaceflightTick(now) {
     }
   });
 
-  while (spaceAsteroids.length < 5) spaceAsteroids.push(makeSpaceAsteroid());
+  while (spaceAsteroids.length < SPACE_MIN_ASTEROIDS) spaceAsteroids.push(makeSpaceAsteroid());
+
+  var distToPlanet = Math.hypot(spaceship.x - spacePlanet.x, spaceship.y - spacePlanet.y);
+  if (!spaceReachedPlanet && distToPlanet < spacePlanet.r + 12) {
+    spaceReachedPlanet = true;
+    pushLog(spaceMeteorsDestroyed >= SPACE_METEOR_GOAL
+      ? "You've found the Cyber Planet! Preparing to land..."
+      : "You've found the Cyber Planet! Clear more meteorites before you land.");
+  }
+
+  spaceCam.x = spaceship.x; spaceCam.y = spaceship.y;
 
   renderAll();
 
-  if (spaceTimeLeft <= 0) {
+  var missionDone = spaceReachedPlanet && spaceMeteorsDestroyed >= SPACE_METEOR_GOAL;
+  if (missionDone || spaceElapsed >= SPACEFLIGHT_MAX_MS) {
     spaceRunning = false;
     finishSpaceflight();
     return;
@@ -5097,11 +5178,25 @@ function finishSpaceflight() {
   renderAll();
 }
 
+// The camera follows the ship but is clamped to the world bounds, so the
+// view stops scrolling once you're near an edge instead of showing empty
+// space beyond it.
+function spaceCameraOffset() {
+  var camX = Math.max(LW / 2, Math.min(SPACE_WORLD_W - LW / 2, spaceCam.x));
+  var camY = Math.max(LH / 2, Math.min(SPACE_WORLD_H - LH / 2, spaceCam.y));
+  return { x: LW / 2 - camX, y: LH / 2 - camY };
+}
+
 function renderSpaceflightScreen() {
   px(0, 0, LW, LH, "#04040c");
+  var off = spaceCameraOffset();
+  ctx.save();
+  ctx.translate(off.x, off.y);
+
   ctx.fillStyle = "#ffffff";
   spaceStars.forEach(function (st) { ctx.fillRect(st.x, st.y, st.r, st.r); });
 
+  drawSpacePlanet(spacePlanet);
   spaceAsteroids.forEach(drawSpaceAsteroid);
 
   ctx.fillStyle = "#ffe066";
@@ -5109,14 +5204,60 @@ function renderSpaceflightScreen() {
 
   drawSpaceship(spaceship);
 
+  ctx.restore();
+
+  renderSpaceflightHud();
+}
+
+function drawSpacePlanet(p) {
+  if (!p) return;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.fillStyle = "#1a3d2c";
+  ctx.beginPath(); ctx.arc(0, 0, p.r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#39ff88";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "#39ff88";
+  ctx.beginPath(); ctx.arc(-p.r * 0.3, -p.r * 0.2, p.r * 0.22, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(p.r * 0.35, p.r * 0.3, p.r * 0.14, 0, Math.PI * 2); ctx.fill();
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#39ff88";
+  ctx.font = "bold 10px 'Courier New', monospace";
+  ctx.fillText("CYBER PLANET", 0, -p.r - 10);
+  ctx.textAlign = "left";
+  ctx.restore();
+}
+
+// HUD: meteorite progress plus a compass arrow (+ distance) pointing at
+// the Cyber Planet, since it starts out of view and has to be found.
+function renderSpaceflightHud() {
   ctx.textAlign = "center";
   ctx.fillStyle = "#39ff88";
   ctx.font = "bold 13px 'Courier New', monospace";
   ctx.fillText("ENGAGING CYBER DRIVE", LW / 2, 20);
   ctx.font = "11px 'Courier New', monospace";
   ctx.fillStyle = "#aaaaaa";
-  var secs = Math.max(0, Math.ceil((spaceTimeLeft || 0) / 1000));
-  ctx.fillText("Arriving in " + secs + "s -- dodge & shoot the asteroids!", LW / 2, 36);
+  ctx.fillText("Meteorites: " + spaceMeteorsDestroyed + "/" + SPACE_METEOR_GOAL, LW / 2, 36);
+  ctx.textAlign = "left";
+
+  var dx = spacePlanet.x - spaceship.x, dy = spacePlanet.y - spaceship.y;
+  var dist = Math.sqrt(dx * dx + dy * dy);
+  var ang = Math.atan2(dy, dx);
+  ctx.save();
+  ctx.translate(LW / 2, 54);
+  ctx.rotate(ang);
+  ctx.fillStyle = spaceReachedPlanet ? "#39ff88" : "#66ccff";
+  ctx.beginPath();
+  ctx.moveTo(13, 0); ctx.lineTo(-8, 8); ctx.lineTo(-8, -8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#66ccff";
+  ctx.font = "10px 'Courier New', monospace";
+  ctx.fillText(Math.round(dist) + "m to Cyber Planet", LW / 2, 78);
   ctx.textAlign = "left";
 }
 
@@ -5338,20 +5479,261 @@ function turnInRobotParts() {
 function openRobotKing() {
   townScreen = "robotKing";
   pushLog("-----The Robot King-----");
-  pushLog("\"Welcome, traveler. I am the one you rebuilt —");
-  pushLog("a man of the future, sent to Earth long ago.\"");
-  pushLog("\"This is Cyber World, and it is dying. The aliens,");
-  pushLog("spiteful after their defeat, sent zombies to destroy us.");
-  pushLog("We are not built to harm — we cannot fight them.\"");
-  if (!cyberWeaponsGiven) {
-    cyberWeaponsGiven = true;
-    for (var i = 0; i < party.length; i++) inventory.push({ category: "weapon", item: CYBER_BLASTER });
-    pushLog("\"But we have made you weapons. Use them well.\"");
-    pushLog("Received " + party.length + " Cyber Blasters!");
+  if (!metRobotKing) {
+    metRobotKing = true;
+    pushLog("\"Welcome, traveler. I am the one you rebuilt —");
+    pushLog("a man of the future, sent to Earth long ago.\"");
+    pushLog("\"This is Cyber World, and it is dying. The aliens,");
+    pushLog("spiteful after their defeat, sent zombies to destroy us.");
+    pushLog("We are not built to harm — we cannot fight them.\"");
+    pushLog("\"Long ago we hid weapons in the old tower for a moment");
+    pushLog("like this. Find the tower — your party can arm themselves");
+    pushLog("there and make a stand.\"");
+  } else if (!cyberWeaponsGiven) {
+    pushLog("\"Find the tower — your party can arm themselves there.\"");
   } else {
     pushLog("\"Stay sharp out there.\"");
   }
+  // every visit, free of charge — heals AND revives, unlike the paid
+  // rest/healer services, since this is the grateful king's own gift
+  var anyRevived = party.some(function (p) { return !p.alive; });
+  party.forEach(function (p) { p.alive = true; p.hp = p.maxHp; });
+  pushLog(anyRevived
+    ? "The Robot King's restorative field revives and mends your party!"
+    : "The Robot King's restorative field mends your party!");
   renderAll();
+}
+
+// The tower's hidden weapons cache — a one-time find that arms the whole
+// party with Cyber Blasters and immediately throws them into a fight
+// against the zombies drawn by the commotion, literally "bringing the
+// weapons out" to help. Revisiting afterward is just flavor.
+function openCyberTower() {
+  if (!cyberWeaponsGiven) {
+    cyberWeaponsGiven = true;
+    pushLog("-----The Tower-----");
+    pushLog("A hidden cache built into the tower's base. Your party");
+    pushLog("draws out the Cyber Blasters kept here for this moment!");
+    for (var i = 0; i < party.length; i++) inventory.push({ category: "weapon", item: CYBER_BLASTER });
+    pushLog("Received " + party.length + " Cyber Blasters!");
+    pushLog("The noise draws a whole horde of zombies straight to you!");
+    enterZombieHorde();
+    return;
+  }
+  pushLog("The tower's weapons cache stands empty now.");
+  renderAll();
+}
+
+// ============================================================
+// ZOMBIE HORDE — the tower fight plays out as a wave-survival lane
+// shooter instead of the usual turn-based arena: the party holds a
+// fixed baseline, moves left/right, auto-fires upward, and a whole
+// wave of zombies rushes down from the top at once. Clear all 3 waves
+// to win; a full party wipe uses the same hospital respawn as any
+// other defeat.
+// ============================================================
+var hordeRunning = false;
+var hordeSquadX = 0;
+var hordeZombies = [];
+var hordeBullets = [];
+var hordeWave = 0;
+var HORDE_WAVE_COUNTS = [5, 8, 12];
+var hordeKeysHeld = { left: false, right: false };
+var HORDE_MOVE_SPEED = 3.2;     // px per 16.67ms frame, continuous while held
+var hordeFireTimer = 0;
+var HORDE_FIRE_INTERVAL = 260;  // ms between auto-fire volleys
+var HORDE_BULLET_SPEED = 7;
+var hordeLastTick = 0;
+
+function hordeSetHeld(key, val) {
+  if (state.mode !== "zombieHorde") return;
+  if (key === "left" || key === "right") hordeKeysHeld[key] = val;
+}
+
+function enterZombieHorde() {
+  state.mode = "zombieHorde";
+  hordeSquadX = MAP_INNER_W / 2;
+  hordeZombies = [];
+  hordeBullets = [];
+  hordeWave = 0;
+  hordeKeysHeld = { left: false, right: false };
+  hordeFireTimer = 0;
+  hordeLastTick = performance.now();
+  hordeRunning = true;
+  pushLog("-----The zombie horde descends!-----");
+  startHordeWave();
+  renderAll();
+  requestAnimationFrame(hordeTick);
+}
+
+function startHordeWave() {
+  hordeWave++;
+  var count = HORDE_WAVE_COUNTS[Math.min(hordeWave - 1, HORDE_WAVE_COUNTS.length - 1)];
+  for (var i = 0; i < count; i++) hordeZombies.push(makeHordeZombie());
+  pushLog("Wave " + hordeWave + ": " + count + " zombies incoming!");
+}
+
+function makeHordeZombie() {
+  var hp = 14 + Math.floor(Math.random() * 8) + (hordeWave - 1) * 4;
+  return {
+    x: 20 + Math.random() * (MAP_INNER_W - 40), y: -20,
+    hp: hp, maxHp: hp,
+    speed: 0.5 + Math.random() * 0.3 + (hordeWave - 1) * 0.08,
+    swerve: (Math.random() - 0.5) * 0.03, swerveT: Math.random() * Math.PI * 2,
+    hitFlashUntil: 0
+  };
+}
+
+// One randomly chosen still-living party member takes the hit — matches
+// how a real turn-based fight can knock anyone out, not just the leader.
+function hordeDamagePartyMember() {
+  var alive = party.filter(function (p) { return p.alive; });
+  if (alive.length === 0) return;
+  var p = alive[Math.floor(Math.random() * alive.length)];
+  var dmg = 3 + Math.floor(Math.random() * 6);
+  p.hp -= dmg;
+  if (p.hp <= 0) {
+    p.hp = 0; p.alive = false;
+    pushLog(p.name + " is overrun by the horde and falls!");
+  }
+}
+
+function hordeTick(now) {
+  if (!hordeRunning) return;
+  var dt = Math.min(now - hordeLastTick, 50);
+  hordeLastTick = now;
+
+  if (hordeKeysHeld.left) hordeSquadX -= HORDE_MOVE_SPEED * (dt / 16.67);
+  if (hordeKeysHeld.right) hordeSquadX += HORDE_MOVE_SPEED * (dt / 16.67);
+  hordeSquadX = Math.max(20, Math.min(MAP_INNER_W - 20, hordeSquadX));
+
+  hordeFireTimer -= dt;
+  if (hordeFireTimer <= 0) {
+    hordeFireTimer = HORDE_FIRE_INTERVAL;
+    var aliveCount = Math.max(1, party.filter(function (p) { return p.alive; }).length);
+    for (var i = 0; i < aliveCount; i++) {
+      hordeBullets.push({ x: hordeSquadX + (i - (aliveCount - 1) / 2) * 14, y: MAP_INNER_H - 40 });
+    }
+  }
+
+  hordeBullets = hordeBullets.filter(function (b) { return b.y > -10; });
+  hordeBullets.forEach(function (b) { b.y -= HORDE_BULLET_SPEED * (dt / 16.67); });
+
+  hordeZombies.forEach(function (z) {
+    z.swerveT += dt * 0.003;
+    z.x += Math.sin(z.swerveT) * z.swerve * dt;
+    z.y += z.speed * (dt / 16.67);
+  });
+
+  for (var bi = hordeBullets.length - 1; bi >= 0; bi--) {
+    var b = hordeBullets[bi];
+    for (var zi = 0; zi < hordeZombies.length; zi++) {
+      var z = hordeZombies[zi];
+      if (Math.abs(b.x - z.x) < 12 && Math.abs(b.y - z.y) < 14) {
+        z.hp -= 8;
+        z.hitFlashUntil = now + 120;
+        hordeBullets.splice(bi, 1);
+        if (z.hp <= 0) hordeZombies.splice(zi, 1);
+        break;
+      }
+    }
+  }
+
+  var baselineY = MAP_INNER_H - 46;
+  for (var zi2 = hordeZombies.length - 1; zi2 >= 0; zi2--) {
+    if (hordeZombies[zi2].y >= baselineY) {
+      hordeZombies.splice(zi2, 1);
+      hordeDamagePartyMember();
+    }
+  }
+
+  if (!partyAlive()) {
+    hordeRunning = false;
+    hordeDefeat();
+    return;
+  }
+
+  if (hordeZombies.length === 0) {
+    if (hordeWave >= HORDE_WAVE_COUNTS.length) {
+      hordeRunning = false;
+      hordeVictory();
+      return;
+    }
+    startHordeWave();
+  }
+
+  renderAll();
+  requestAnimationFrame(hordeTick);
+}
+
+function hordeVictory() {
+  pushLog("-----The horde is cleared!-----");
+  pushLog("Your party holds the tower.");
+  hordeZombies = []; hordeBullets = [];
+  state.mode = "cyber";
+  renderAll();
+}
+
+function hordeDefeat() {
+  pushLog("-----The horde overwhelms your party-----");
+  party[0].alive = true;
+  party[0].hp = party[0].maxHp;
+  sharedGold = Math.floor(sharedGold * 0.5);
+  hordeZombies = []; hordeBullets = [];
+  respawnAfterDefeat();
+  pushLog("You wake at the hospital. Half your gold is gone.");
+  if (party.some(function (p, i) { return i > 0 && !p.alive; })) {
+    pushLog("The rest of your party lies fallen. Revive them here.");
+  }
+  renderAll();
+}
+
+function renderHordeScreen() {
+  px(0, 0, LW, LH, PAL.black);
+  renderTopBar();
+  drawMapBorder();
+  renderHordeArena();
+  renderBottomBar();
+  renderLogArea();
+}
+
+function renderHordeArena() {
+  px(MAP_INNER_X0, MAP_INNER_Y0, MAP_INNER_W, MAP_INNER_H, "#0a0a0a");
+
+  var now = performance.now();
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  hordeZombies.forEach(function (z) {
+    var sx = MAP_INNER_X0 + z.x, sy = MAP_INNER_Y0 + z.y;
+    if (now < z.hitFlashUntil) {
+      ctx.fillStyle = "rgba(255,0,0,0.5)";
+      ctx.beginPath(); ctx.arc(sx, sy, 11, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.font = "18px serif";
+    ctx.fillText(MONSTER_EMOJI["Cyber Zombie"], sx, sy);
+  });
+  ctx.restore();
+
+  ctx.fillStyle = "#ffe066";
+  hordeBullets.forEach(function (b) {
+    px(MAP_INNER_X0 + b.x - 1, MAP_INNER_Y0 + b.y - 4, 2, 8, "#ffe066");
+  });
+
+  var aliveParty = party.filter(function (p) { return p.alive; });
+  var baseY = MAP_INNER_H - 30;
+  aliveParty.forEach(function (p, i) {
+    var sx = MAP_INNER_X0 + hordeSquadX + (i - (aliveParty.length - 1) / 2) * 16;
+    var sy = MAP_INNER_Y0 + baseY;
+    drawHuman(sx, sy, TILE * 0.9, p.color, "N");
+  });
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = PAL.gold;
+  ctx.font = "11px 'Courier New', monospace";
+  ctx.fillText("Wave " + hordeWave + "/" + HORDE_WAVE_COUNTS.length + " -- " + hordeZombies.length + " zombies left",
+    MAP_INNER_X0 + MAP_INNER_W / 2, MAP_INNER_Y0 + 14);
+  ctx.textAlign = "left";
 }
 function openVaultChest(x, y) {
   var grid = currentGrid();
@@ -5726,10 +6108,28 @@ function healerRevive(idx) {
 // ============================================================
 // INPUT
 // ============================================================
-document.getElementById("btnN").onclick = function () { if (state.mode === "spaceflight") spaceThrust(); else if (awaitingShotDirection) fireRangedWeapon("N"); else if (awaitingCannonDirection) fireCannon("N"); else if (state.mode === "combat") arenaMove(0, -1); else move(0, -1); };
-document.getElementById("btnS").onclick = function () { if (state.mode === "spaceflight") spaceThrust(); else if (awaitingShotDirection) fireRangedWeapon("S"); else if (awaitingCannonDirection) fireCannon("S"); else if (state.mode === "combat") arenaMove(0, 1); else move(0, 1); };
-document.getElementById("btnE").onclick = function () { if (state.mode === "spaceflight") spaceTurnRight(); else if (awaitingShotDirection) fireRangedWeapon("E"); else if (awaitingCannonDirection) fireCannon("E"); else if (state.mode === "combat") arenaMove(1, 0); else move(1, 0); };
-document.getElementById("btnW").onclick = function () { if (state.mode === "spaceflight") spaceTurnLeft(); else if (awaitingShotDirection) fireRangedWeapon("W"); else if (awaitingCannonDirection) fireCannon("W"); else if (state.mode === "combat") arenaMove(-1, 0); else move(-1, 0); };
+document.getElementById("btnN").onclick = function () { if (state.mode === "spaceflight" || state.mode === "zombieHorde") return; if (awaitingShotDirection) fireRangedWeapon("N"); else if (awaitingCannonDirection) fireCannon("N"); else if (state.mode === "combat") arenaMove(0, -1); else move(0, -1); };
+document.getElementById("btnS").onclick = function () { if (state.mode === "spaceflight" || state.mode === "zombieHorde") return; if (awaitingShotDirection) fireRangedWeapon("S"); else if (awaitingCannonDirection) fireCannon("S"); else if (state.mode === "combat") arenaMove(0, 1); else move(0, 1); };
+document.getElementById("btnE").onclick = function () { if (state.mode === "spaceflight" || state.mode === "zombieHorde") return; if (awaitingShotDirection) fireRangedWeapon("E"); else if (awaitingCannonDirection) fireCannon("E"); else if (state.mode === "combat") arenaMove(1, 0); else move(1, 0); };
+document.getElementById("btnW").onclick = function () { if (state.mode === "spaceflight" || state.mode === "zombieHorde") return; if (awaitingShotDirection) fireRangedWeapon("W"); else if (awaitingCannonDirection) fireCannon("W"); else if (state.mode === "combat") arenaMove(-1, 0); else move(-1, 0); };
+
+// Space-flight and zombie-horde controls are both hold-based (press and
+// hold to move/turn/thrust/fire), wired via pointerdown/up instead of
+// onclick so a continuous press is actually continuous. Each button
+// notifies both mode handlers; whichever mode is actually active is the
+// only one that does anything with it.
+function bindDirectionalHold(btnId, key) {
+  var el = document.getElementById(btnId);
+  el.addEventListener("pointerdown", function (e) { e.preventDefault(); spaceSetHeld(key, true); hordeSetHeld(key, true); });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(function (evt) {
+    el.addEventListener(evt, function () { spaceSetHeld(key, false); hordeSetHeld(key, false); });
+  });
+}
+bindDirectionalHold("btnW", "left");
+bindDirectionalHold("btnE", "right");
+bindDirectionalHold("btnN", "thrust");
+bindDirectionalHold("btnS", "thrust");
+bindDirectionalHold("btnFire", "fire");
 document.getElementById("btnAttack").onclick = function () {
   if (state.mode === "combat") { combatPlayerAttack(); return; }
   if (townScreen || confirmingRun) return;
@@ -5754,10 +6154,15 @@ document.getElementById("btnShoot").onclick = cmdShoot;
 
 document.addEventListener("keydown", function (e) {
   if (state.mode === "spaceflight") {
-    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") spaceTurnLeft();
-    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") spaceTurnRight();
-    else if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") spaceThrust();
-    else if (e.key === " " || e.key === "f" || e.key === "F") spaceFire();
+    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") spaceSetHeld("left", true);
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") spaceSetHeld("right", true);
+    else if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") spaceSetHeld("thrust", true);
+    else if (e.key === " " || e.key === "f" || e.key === "F") spaceSetHeld("fire", true);
+    return;
+  }
+  if (state.mode === "zombieHorde") {
+    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") hordeSetHeld("left", true);
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") hordeSetHeld("right", true);
     return;
   }
   if (awaitingShotDirection) {
@@ -5783,6 +6188,20 @@ document.addEventListener("keydown", function (e) {
   else if (e.key === "m" || e.key === "M") cmdMenu();
   else if (e.key === "r" || e.key === "R") cmdRun();
   else if (e.key === "f" || e.key === "F") cmdFire();
+});
+
+document.addEventListener("keyup", function (e) {
+  if (state.mode === "spaceflight") {
+    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") spaceSetHeld("left", false);
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") spaceSetHeld("right", false);
+    else if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") spaceSetHeld("thrust", false);
+    else if (e.key === " " || e.key === "f" || e.key === "F") spaceSetHeld("fire", false);
+    return;
+  }
+  if (state.mode === "zombieHorde") {
+    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") hordeSetHeld("left", false);
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") hordeSetHeld("right", false);
+  }
 });
 
 // ============================================================
