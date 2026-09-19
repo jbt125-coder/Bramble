@@ -5,6 +5,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>Ultima-Style RPG</title>
+<script src="https://www.youtube.com/iframe_api"></script>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
@@ -56,6 +57,48 @@
     font-size: 11px; padding: 8px; z-index: 999; display: none; white-space: pre-wrap;
     max-height: 40vh; overflow: auto;
   }
+  /* Music player — same mechanism as the reference zombie game: a gear
+     button opens a small panel for pasting a YouTube link, played on
+     loop through a hidden iframe player. */
+  #cogBtn {
+    position: fixed; top: 6px; right: 6px; z-index: 30;
+    background: rgba(0,0,0,0.85); border: 2px solid #8855ff; color: #8855ff;
+    border-radius: 50%; width: 30px; height: 30px; font-size: 15px;
+    cursor: pointer; touch-action: manipulation;
+    display: flex; align-items: center; justify-content: center; padding: 0;
+  }
+  #cogMenuOverlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.8); z-index: 80;
+    display: none; align-items: center; justify-content: center; padding: 16px;
+  }
+  #cogMenuOverlay.show { display: flex; }
+  #cogCard {
+    background: #0a0a0a; border: 2px solid #8855ff; border-radius: 8px;
+    padding: 18px 20px; max-width: 320px; width: 100%; position: relative;
+    color: #fff; font-family: 'Courier New', monospace;
+  }
+  #cogCard h2 { font-size: 13px; letter-spacing: 2px; color: #8855ff; margin-bottom: 14px; text-align: center; }
+  #closeCog {
+    position: absolute; top: 8px; right: 10px; background: transparent; border: none;
+    color: #ff5555; font-size: 18px; cursor: pointer; touch-action: manipulation;
+  }
+  #cogCard label { font-size: 10px; color: #8855ff; display: block; margin-bottom: 5px; letter-spacing: 1px; }
+  #ytInput {
+    width: 100%; background: #000; border: 1px solid #8855ff; border-radius: 4px;
+    color: #ccc; font-size: 11px; padding: 7px 8px; font-family: inherit; margin-bottom: 8px;
+  }
+  .cogRow { display: flex; gap: 8px; margin-bottom: 8px; }
+  .cogMusicBtn {
+    flex: 1; background: #000; border: 2px solid #39ff88; color: #39ff88;
+    font-size: 11px; letter-spacing: 1px; padding: 8px 4px; cursor: pointer;
+    font-family: inherit; font-weight: bold; touch-action: manipulation;
+  }
+  #musicStatus { font-size: 10px; color: #888; min-height: 14px; margin-bottom: 8px; }
+  .volRow { display: flex; align-items: center; gap: 10px; }
+  .volRow span { font-size: 10px; color: #8855ff; min-width: 55px; letter-spacing: 1px; }
+  #musicVol { flex: 1; }
+  #ytPlayerContainer { position: fixed; left: -220px; bottom: 0; width: 200px; height: 200px; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -87,6 +130,25 @@
 </div>
 
 <div id="errBox"></div>
+
+<button id="cogBtn" title="Music">&#9881;</button>
+
+<div id="cogMenuOverlay">
+  <div id="cogCard">
+    <button id="closeCog">&#10005;</button>
+    <h2>MUSIC PLAYER</h2>
+    <label>PASTE A YOUTUBE LINK</label>
+    <input id="ytInput" type="text" placeholder="https://youtube.com/watch?v=..." value="https://youtu.be/XMcbjp4Sq4M">
+    <div class="cogRow">
+      <button class="cogMusicBtn" id="ytPlay">PLAY</button>
+      <button class="cogMusicBtn" id="ytStop">STOP</button>
+    </div>
+    <div id="musicStatus">No music loaded</div>
+    <div class="volRow"><span>VOLUME</span><input type="range" id="musicVol" min="0" max="100" value="60"></div>
+  </div>
+</div>
+
+<div id="ytPlayerContainer"></div>
 
 <script>
 window.onerror = function (msg, src, line, col, err) {
@@ -917,6 +979,7 @@ var hasCyberRocket = false;
 // zombies (sent by the vengeful aliens) have overrun his world, and his
 // people can't bring themselves to fight, so he arms the party instead.
 var metRobotKing = false;
+var hasHeadphones = false; // the Robot King's reward for proving yourself against 10 zombies
 var cyberWeaponsGiven = false;
 var CYBER_BLASTER = { name: "Cyber Blaster", dmgBonus: 11, emoji: "🔫", ranged: true, range: 7 };
 // named distinctly from the regular overworld "Zombie" (a much weaker,
@@ -1320,6 +1383,8 @@ function spawnMapMonster(screenKey) {
   } else if (nearTileType(T.MOUNTAIN) && Math.random() < 0.3) {
     var mountainPool = [GIANT_EAGLE_DEF, YETI_DEF];
     def = mountainPool[Math.floor(Math.random() * mountainPool.length)];
+  } else if (screenKey === "cyber") {
+    def = CYBER_ZOMBIE_DEF;
   } else {
     def = MONSTER_DEFS[Math.floor(Math.random() * MONSTER_DEFS.length)];
   }
@@ -1347,7 +1412,7 @@ function entityIsHere(e) {
 // (Sea Serpent/Kraken/Merman) can never come ashore either, regardless of
 // whether the player happens to be sailing at the time.
 function monsterCanEnter(m, t) {
-  if (t === null || t === T.MOUNTAIN || t === T.WALL) return false;
+  if (t === null || t === T.MOUNTAIN || t === T.WALL || t === T.CYBER_WALL) return false;
   if (t === T.WATER || t === T.ISLAND) return !!m.aquatic;
   return !m.aquatic;
 }
@@ -1457,9 +1522,11 @@ function tryPirateEncounter() {
   }
 }
 
-// ---------- ocean hazards: tornado (persistent, wanders) and tsunami
-// (one-off wave) — both deal 50% of current HP to the whole party ----------
+// ---------- ocean hazards: tornado and tsunami — both wander randomly
+// each sailing step and deal 50% of current HP to the whole party on
+// contact, and both are visible on the map before they strike ----------
 var tornadoes = []; // { x, y, screen } — wander randomly each sailing step
+var tsunamis = [];  // { x, y, screen } — same wandering-hazard treatment as tornadoes
 
 function applyHazardDamage(label) {
   pushLog("-----" + label + "!-----");
@@ -1489,9 +1556,20 @@ function tryOceanHazard() {
     tornadoes.push({ x: state.x + (Math.random() < 0.5 ? -3 : 3), y: state.y, screen: state.mode });
     pushLog("A tornado forms on the horizon!");
   }
-  // tsunami: a one-off wave with no persistent presence
-  if (Math.random() < 0.004) {
-    applyHazardDamage("Tsunami");
+  // tsunamis: same wandering-hazard treatment as tornadoes, so they're
+  // visible on the map (and in principle avoidable) before they strike,
+  // instead of the old invisible instant dice-roll
+  tsunamis.forEach(function (t) {
+    if (t.screen !== state.mode) return;
+    var tDirs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+    var tD = tDirs[Math.floor(Math.random() * tDirs.length)];
+    var tnx = t.x + tD[0], tny = t.y + tD[1];
+    if (tileAt(tnx, tny) === T.WATER) { t.x = tnx; t.y = tny; }
+    if (t.x === state.x && t.y === state.y) applyHazardDamage("Tsunami");
+  });
+  if (Math.random() < 0.004 && !tsunamis.some(function (t) { return t.screen === state.mode; })) {
+    tsunamis.push({ x: state.x + (Math.random() < 0.5 ? -3 : 3), y: state.y, screen: state.mode });
+    pushLog("A massive wave forms on the horizon!");
   }
   if (!partyAlive()) {
     pushLog("-----Party defeated-----");
@@ -1528,16 +1606,6 @@ function tryAlienEncounter() {
   if (Math.random() < 0.05) {
     var group = buildMonsterGroup(ALIEN_DEF, true);
     enterArena(group, state.mode, "alien");
-  }
-}
-
-// Zombies overrun Cyber World — a persistent ambient threat, not a
-// counted quest like the alien encounters (there's no "cured" state).
-function tryZombieEncounter() {
-  if (state.mode !== "cyber") return;
-  if (Math.random() < 0.06) {
-    var group = buildMonsterGroup(CYBER_ZOMBIE_DEF, true);
-    enterArena(group, state.mode, "cyberZombie");
   }
 }
 
@@ -2556,6 +2624,15 @@ function renderMap() {
         ctx.fillText("🌪️", sx + TILE / 2, sy + TILE / 2 + 1);
         ctx.restore();
       }
+      var tsunamiHere = tsunamis.find(function (t) { return t.screen === state.mode && t.x === gx && t.y === gy; });
+      if (tsunamiHere) {
+        ctx.save();
+        ctx.font = Math.round(TILE * 0.72) + "px serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("🌊", sx + TILE / 2, sy + TILE / 2 + 1);
+        ctx.restore();
+      }
     }
   }
 
@@ -2749,6 +2826,7 @@ function renderAll() {
     renderBottomBar();
     renderLogArea();
     if (confirmingCyberDrive) renderCyberDriveConfirmDialog();
+    if (confirmingHordeAudio) renderHordeAudioConfirmDialog();
   }
   if (spaceTransition) renderCyberFlash();
   if (townScreen) renderTownScreenOverlay();
@@ -3071,13 +3149,20 @@ function renderTownScreenOverlay() {
     }
   } else if (townScreen === "robotKing") {
     ctx.fillStyle = PAL.white;
-    if (!cyberWeaponsGiven) {
+    var zombieKillsUI = monsterKillCounts["Cyber Zombie"] || 0;
+    if (!hasHeadphones) {
       ctx.fillText("\"I am the one you rebuilt — a man", 36, y); y += 18;
       ctx.fillText("of the future, sent to Earth long ago.\"", 36, y); y += 20;
-      ctx.fillText("\"Zombies, sent by the aliens, have", 36, y); y += 18;
-      ctx.fillText("overrun Cyber World. We cannot fight them.\"", 36, y); y += 20;
-      ctx.fillText("\"We hid weapons in the old tower.", 36, y); y += 18;
-      ctx.fillText("Find it, and make your stand.\"", 36, y); y += 18;
+      ctx.fillText("\"Zombies overrun Cyber World. We cannot", 36, y); y += 18;
+      ctx.fillText("fight — but you are a great hero.\"", 36, y); y += 20;
+      ctx.fillText("\"Kill 10 zombies to prove your strength.\"", 36, y); y += 18;
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText("Zombies slain: " + zombieKillsUI + "/10", 36, y); y += 18;
+    } else if (!cyberWeaponsGiven) {
+      ctx.fillText("\"You've proven your strength. Take these", 36, y); y += 18;
+      ctx.fillText("headphones — they guard against the horde's", 36, y); y += 18;
+      ctx.fillText("screams. Find the tower for weapons, and", 36, y); y += 18;
+      ctx.fillText("defeat them to save our world.\"", 36, y); y += 18;
     } else {
       ctx.fillText("\"Stay sharp out there.\"", 36, y); y += 20;
     }
@@ -3315,7 +3400,7 @@ function drawCloseX(r) {
 // MOVEMENT / INTERACTION
 // ============================================================
 function tryEncounter() {
-  if (state.mode !== "overworld" && state.mode !== "dungeon" && state.mode !== "island") return;
+  if (state.mode !== "overworld" && state.mode !== "dungeon" && state.mode !== "island" && state.mode !== "cyber") return;
   // the Archwizard's floor is quiet — no wandering monsters on level 8
   if (state.mode === "dungeon" && state.dungeonLevel === 8) return;
   // once the trident has proven itself against the Kraken King, the seas
@@ -4015,7 +4100,7 @@ function findIslandArrivalSpot() {
 }
 
 function move(dx, dy) {
-  if (state.mode === "combat" || state.mode === "spaceflight" || state.mode === "zombieHorde" || townScreen || awaitingCannonDirection || confirmingCyberDrive) return;
+  if (state.mode === "combat" || state.mode === "spaceflight" || state.mode === "zombieHorde" || townScreen || awaitingCannonDirection || confirmingCyberDrive || confirmingHordeAudio) return;
   var facing = dx === -1 ? "W" : dx === 1 ? "E" : dy === -1 ? "N" : dy === 1 ? "S" : state.facing;
   state.facing = facing;
 
@@ -4407,7 +4492,10 @@ function move(dx, dy) {
     tryAlienEncounter();
     tryVolcanoBurn();
   } else if (state.mode === "cyber") {
-    tryZombieEncounter();
+    // zombies now wander visibly on the map, same as any other overworld
+    // monster, instead of ambushing blind — see spawnMapMonster/stepMapMonsters
+    tryEncounter();
+    stepMapMonsters();
   } else if (state.mode === "town" || state.mode === "islandTown") {
     stepAllRoamingEntities();
     // the tavern keeper talks to you as soon as you're next to (or bump
@@ -4606,7 +4694,7 @@ function gatherSaveData() {
     seaCreatureKillsForQuest: seaCreatureKillsForQuest, hasTrident: hasTrident, hasKrakenSkull: hasKrakenSkull,
     thiefKingQuestStarted: thiefKingQuestStarted, hasPirateFlag: hasPirateFlag,
     futureManComplete: futureManComplete, hasCyberRocket: hasCyberRocket,
-    metRobotKing: metRobotKing, cyberWeaponsGiven: cyberWeaponsGiven
+    metRobotKing: metRobotKing, hasHeadphones: hasHeadphones, cyberWeaponsGiven: cyberWeaponsGiven
   };
 }
 
@@ -4657,6 +4745,7 @@ function applySaveData(d) {
   futureManComplete = !!d.futureManComplete;
   hasCyberRocket = !!d.hasCyberRocket;
   metRobotKing = !!d.metRobotKing;
+  hasHeadphones = !!d.hasHeadphones;
   cyberWeaponsGiven = !!d.cyberWeaponsGiven;
   // Old saves (from before the 8-level dungeon rework) have no
   // dungeonLevel at all. Most of the time that's harmless — it just
@@ -5479,6 +5568,7 @@ function turnInRobotParts() {
 function openRobotKing() {
   townScreen = "robotKing";
   pushLog("-----The Robot King-----");
+  var zombieKills = monsterKillCounts["Cyber Zombie"] || 0;
   if (!metRobotKing) {
     metRobotKing = true;
     pushLog("\"Welcome, traveler. I am the one you rebuilt —");
@@ -5486,9 +5576,21 @@ function openRobotKing() {
     pushLog("\"This is Cyber World, and it is dying. The aliens,");
     pushLog("spiteful after their defeat, sent zombies to destroy us.");
     pushLog("We are not built to harm — we cannot fight them.\"");
-    pushLog("\"Long ago we hid weapons in the old tower for a moment");
-    pushLog("like this. Find the tower — your party can arm themselves");
-    pushLog("there and make a stand.\"");
+    pushLog("\"We have been told you are a great hero. Please kill");
+    pushLog("10 zombies to show us your strength.\"");
+  } else if (!hasHeadphones) {
+    if (zombieKills >= 10) {
+      hasHeadphones = true;
+      pushLog("\"You have proven you can fell ten of the horde!\"");
+      pushLog("\"Take these,\" says the Robot King. \"All of our best");
+      pushLog("warriors wear headphones like these to protect them");
+      pushLog("from the zombies' screams. Enable the audio once you");
+      pushLog("reach the tower — we will supply weapons there to help");
+      pushLog("you battle the horde. Defeat them and save our world.\"");
+      pushLog("Received Headphones!");
+    } else {
+      pushLog("\"Prove your strength — kill 10 zombies. (" + zombieKills + "/10 so far)\"");
+    }
   } else if (!cyberWeaponsGiven) {
     pushLog("\"Find the tower — your party can arm themselves there.\"");
   } else {
@@ -5507,22 +5609,193 @@ function openRobotKing() {
 // The tower's hidden weapons cache — a one-time find that arms the whole
 // party with Cyber Blasters and immediately throws them into a fight
 // against the zombies drawn by the commotion, literally "bringing the
-// weapons out" to help. Revisiting afterward is just flavor.
+// weapons out" to help. Sealed until the Robot King's trial is passed
+// (see hasHeadphones). Revisiting afterward is just flavor.
 function openCyberTower() {
-  if (!cyberWeaponsGiven) {
-    cyberWeaponsGiven = true;
-    pushLog("-----The Tower-----");
-    pushLog("A hidden cache built into the tower's base. Your party");
-    pushLog("draws out the Cyber Blasters kept here for this moment!");
-    for (var i = 0; i < party.length; i++) inventory.push({ category: "weapon", item: CYBER_BLASTER });
-    pushLog("Received " + party.length + " Cyber Blasters!");
-    pushLog("The noise draws a whole horde of zombies straight to you!");
-    enterZombieHorde();
+  if (cyberWeaponsGiven) {
+    pushLog("The tower's weapons cache stands empty now.");
+    renderAll();
     return;
   }
-  pushLog("The tower's weapons cache stands empty now.");
+  if (!hasHeadphones) {
+    pushLog("-----The Tower-----");
+    pushLog("The cache here is sealed tight. The Robot King spoke of");
+    pushLog("proving your strength first — perhaps he's still waiting.");
+    renderAll();
+    return;
+  }
+  cyberWeaponsGiven = true;
+  pushLog("-----The Tower-----");
+  pushLog("A hidden cache built into the tower's base. Your party");
+  pushLog("draws out the Cyber Blasters kept here for this moment!");
+  for (var i = 0; i < party.length; i++) inventory.push({ category: "weapon", item: CYBER_BLASTER });
+  pushLog("Received " + party.length + " Cyber Blasters!");
+  pushLog("The noise draws a whole horde of zombies straight to you!");
+  confirmingHordeAudio = true;
+  pushLog("Enable the audio to guard against the horde's screams?");
   renderAll();
 }
+
+// ============================================================
+// TOWER BATTLE AUDIO — a "headphones" yes/no gate (same confirm-dialog
+// pattern as the cyber drive) before the horde fight, backed by the
+// same YouTube-link music player as the reference zombie game (see the
+// cog button/menu and ytExtract/ytStartMusic below).
+// ============================================================
+var confirmingHordeAudio = false;
+
+function renderHordeAudioConfirmDialog() {
+  var r = runConfirmRects();
+  px(r.box.x, r.box.y, r.box.w, r.box.h, "#0a0a0a");
+  ctx.strokeStyle = PAL.purple;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(r.box.x, r.box.y, r.box.w, r.box.h);
+
+  ctx.strokeStyle = PAL.red;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(r.close.x, r.close.y, r.close.w, r.close.h);
+  ctx.beginPath();
+  ctx.moveTo(r.close.x + 5, r.close.y + 5); ctx.lineTo(r.close.x + r.close.w - 5, r.close.y + r.close.h - 5);
+  ctx.moveTo(r.close.x + r.close.w - 5, r.close.y + 5); ctx.lineTo(r.close.x + 5, r.close.y + r.close.h - 5);
+  ctx.stroke();
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = PAL.white;
+  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.fillText("Enable the audio?", r.box.x + r.box.w / 2, r.box.y + 34);
+  ctx.font = "11px 'Courier New', monospace";
+  ctx.fillStyle = PAL.gray;
+  ctx.fillText("Your headphones guard against the horde's screams.", r.box.x + r.box.w / 2, r.box.y + 54);
+
+  ctx.strokeStyle = PAL.green;
+  ctx.strokeRect(r.yes.x, r.yes.y, r.yes.w, r.yes.h);
+  ctx.fillStyle = PAL.green;
+  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.fillText("YES", r.yes.x + r.yes.w / 2, r.yes.y + 21);
+
+  ctx.strokeStyle = PAL.red;
+  ctx.strokeRect(r.no.x, r.no.y, r.no.w, r.no.h);
+  ctx.fillStyle = PAL.red;
+  ctx.fillText("NO", r.no.x + r.no.w / 2, r.no.y + 21);
+  ctx.textAlign = "left";
+}
+
+function handleHordeAudioConfirmTap(lx, ly) {
+  var r = runConfirmRects();
+  if (inRect(lx, ly, r.close) || inRect(lx, ly, r.no)) { confirmHordeAudioNo(); return; }
+  if (inRect(lx, ly, r.yes)) { confirmHordeAudioYes(); return; }
+}
+
+function confirmHordeAudioNo() {
+  confirmingHordeAudio = false;
+  enterZombieHorde();
+}
+
+function confirmHordeAudioYes() {
+  confirmingHordeAudio = false;
+  ytStartMusic();
+  enterZombieHorde();
+}
+
+// ============================================================
+// YOUTUBE MUSIC PLAYER — same mechanism as the reference zombie game:
+// a hidden, looping YouTube iframe player, driven by a gear-icon menu
+// where any YouTube video/playlist link can be pasted in. Defaults to
+// that game's own track, so "enable the audio" plays the same music.
+// ============================================================
+var ytPlayer = null;
+var ytReady = false;
+var ytPendingPlay = false;
+var musicVolume = 0.6;
+var DEFAULT_YT = "https://youtu.be/XMcbjp4Sq4M";
+
+function ytExtract(url) {
+  try {
+    var pl = url.match(/[?&]list=([A-Za-z0-9_-]+)/);
+    if (pl) return { type: "playlist", id: pl[1] };
+    var v = url.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
+    if (v) return { type: "video", id: v[1] };
+  } catch (e) {}
+  return null;
+}
+
+function ytStartMusic() {
+  if (ytPlayer && ytPlayer.unMute) {
+    ytPlayer.unMute();
+    ytPlayer.setVolume(Math.round(musicVolume * 100));
+    ytPlayer.playVideo();
+    document.getElementById("musicStatus").textContent = "Playing";
+  } else {
+    ytPendingPlay = true;
+  }
+}
+
+function ytStopMusic() {
+  if (ytPlayer && ytPlayer.pauseVideo) { ytPlayer.pauseVideo(); ytPlayer.mute(); }
+  document.getElementById("musicStatus").textContent = "Stopped";
+}
+
+// Called by the YouTube iframe API script tag once it's loaded — must be
+// reachable as a real global, since Bramble's own code all lives inside
+// one big IIFE (see the window.onYouTubeIframeAPIReady bridge below).
+function onYouTubeIframeAPIReady() {
+  ytReady = true;
+  var input = document.getElementById("ytInput");
+  var url = (input && input.value.trim()) || DEFAULT_YT;
+  var info = ytExtract(url);
+  if (!info) return;
+  var pvars = { autoplay: 1, playsinline: 1, controls: 0, mute: 1, origin: window.location.origin };
+  var vidId;
+  if (info.type === "playlist") { pvars.listType = "playlist"; pvars.list = info.id; pvars.shuffle = 1; }
+  else { vidId = info.id; pvars.loop = 1; pvars.playlist = info.id; }
+  var cfg = {
+    height: "200", width: "200", playerVars: pvars,
+    events: {
+      onReady: function (e) {
+        e.target.setVolume(Math.round(musicVolume * 100));
+        if (ytPendingPlay) {
+          e.target.unMute(); e.target.playVideo();
+          ytPendingPlay = false;
+          document.getElementById("musicStatus").textContent = "Playing";
+        }
+      },
+      onStateChange: function (e) {
+        if (e.data === YT.PlayerState.ENDED || e.data === YT.PlayerState.UNSTARTED) e.target.playVideo();
+      }
+    }
+  };
+  if (vidId) cfg.videoId = vidId;
+  ytPlayer = new YT.Player("ytPlayerContainer", cfg);
+}
+window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+
+document.getElementById("cogBtn").addEventListener("click", function () {
+  document.getElementById("cogMenuOverlay").classList.add("show");
+});
+document.getElementById("closeCog").addEventListener("click", function () {
+  document.getElementById("cogMenuOverlay").classList.remove("show");
+});
+document.getElementById("cogMenuOverlay").addEventListener("click", function (e) {
+  if (e.target === this) this.classList.remove("show");
+});
+document.getElementById("ytPlay").addEventListener("click", function () {
+  var url = document.getElementById("ytInput").value.trim() || DEFAULT_YT;
+  if (ytPlayer && ytPlayer.unMute) {
+    var info = ytExtract(url);
+    if (!info) { document.getElementById("musicStatus").textContent = "Invalid URL"; return; }
+    if (info.type === "playlist") { ytPlayer.loadPlaylist({ list: info.id, listType: "playlist", index: 0 }); }
+    else { ytPlayer.loadVideoById(info.id); }
+    ytPlayer.unMute(); ytPlayer.setVolume(Math.round(musicVolume * 100)); ytPlayer.playVideo();
+    document.getElementById("musicStatus").textContent = "Playing";
+  } else {
+    ytPendingPlay = true;
+  }
+});
+document.getElementById("ytStop").addEventListener("click", ytStopMusic);
+document.getElementById("musicVol").addEventListener("input", function () {
+  musicVolume = this.value / 100;
+  if (ytPlayer && ytPlayer.setVolume) ytPlayer.setVolume(Math.round(musicVolume * 100));
+});
 
 // ============================================================
 // ZOMBIE HORDE — the tower fight plays out as a wave-survival lane
@@ -5667,6 +5940,7 @@ function hordeTick(now) {
 }
 
 function hordeVictory() {
+  ytStopMusic();
   pushLog("-----The horde is cleared!-----");
   pushLog("Your party holds the tower.");
   hordeZombies = []; hordeBullets = [];
@@ -5675,6 +5949,7 @@ function hordeVictory() {
 }
 
 function hordeDefeat() {
+  ytStopMusic();
   pushLog("-----The horde overwhelms your party-----");
   party[0].alive = true;
   party[0].hp = party[0].maxHp;
@@ -6217,6 +6492,7 @@ canvas.addEventListener("click", function (e) {
   var ly = (e.clientY - rect.top) * scaleY;
 
   if (confirmingCyberDrive) { handleCyberDriveConfirmTap(lx, ly); return; }
+  if (confirmingHordeAudio) { handleHordeAudioConfirmTap(lx, ly); return; }
   if (confirmingRun) { handleRunConfirmTap(lx, ly); return; }
   if (equipPickerFor) { handleEquipPickerTap(lx, ly); return; }
   if (potionPickerFor !== null) { handlePotionPickerTap(lx, ly); return; }
