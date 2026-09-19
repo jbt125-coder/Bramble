@@ -2574,16 +2574,24 @@ function drawProjectile(p) {
 // Effective vision radius: normally the full viewport half-width, but
 // forest fog shrinks it a lot when you're standing in or right next to
 // a forest patch.
-function currentVisionRadius() {
+// Forest fog is directional — thick foliage only blocks your view toward
+// whichever side actually has a tree on it, not the whole area around
+// you. Standing just north of a forest tile fogs the view south (into
+// the trees) while the view north stays fully clear, and so on for each
+// side; standing inside the forest itself fogs all four directions.
+function currentVisionRadii() {
   var half = Math.floor(VIEW_TILES / 2);
-  if (state.mode !== "overworld") return half; // fog only applies outdoors
+  var full = { n: half, s: half, e: half, w: half };
+  if (state.mode !== "overworld") return full; // fog only applies outdoors
   var here = tileAt(state.x, state.y);
-  if (here === T.FOREST) return 3;
-  var deltas = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-  for (var i = 0; i < deltas.length; i++) {
-    if (tileAt(state.x + deltas[i][0], state.y + deltas[i][1]) === T.FOREST) return 3;
-  }
-  return half;
+  var reduced = 3;
+  if (here === T.FOREST) return { n: reduced, s: reduced, e: reduced, w: reduced };
+  var radii = { n: half, s: half, e: half, w: half };
+  if (tileAt(state.x, state.y - 1) === T.FOREST) radii.n = reduced;
+  if (tileAt(state.x, state.y + 1) === T.FOREST) radii.s = reduced;
+  if (tileAt(state.x - 1, state.y) === T.FOREST) radii.w = reduced;
+  if (tileAt(state.x + 1, state.y) === T.FOREST) radii.e = reduced;
+  return radii;
 }
 
 // A tile is hidden behind a mountain if a mountain sits strictly between
@@ -2605,8 +2613,7 @@ function blockedByMountain(gx, gy) {
 
 function renderMap() {
   var half = Math.floor(VIEW_TILES / 2);
-  var visionR = currentVisionRadius();
-  var fogActive = visionR < half; // only carve the view down when fog is actually in effect (near forest)
+  var visionRadii = currentVisionRadii();
 
   // Pass 1: terrain, ground items, parked ship/horse — every tile fully
   // painted before anything is drawn on top of it.
@@ -2618,7 +2625,10 @@ function renderMap() {
       var sx = MAP_INNER_X0 + vx * TILE;
       var sy = MAP_INNER_Y0 + vy * TILE;
 
-      var outOfVision = fogActive && Math.max(Math.abs(gx - state.x), Math.abs(gy - state.y)) > visionR;
+      var dxv = gx - state.x, dyv = gy - state.y;
+      var xLimit = dxv > 0 ? visionRadii.e : dxv < 0 ? visionRadii.w : half;
+      var yLimit = dyv > 0 ? visionRadii.s : dyv < 0 ? visionRadii.n : half;
+      var outOfVision = Math.abs(dxv) > xLimit || Math.abs(dyv) > yLimit;
       var hiddenByMountain = blockedByMountain(gx, gy);
 
       if (t === null || outOfVision || hiddenByMountain) {
