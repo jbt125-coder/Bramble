@@ -2986,20 +2986,24 @@ function renderTownScreenOverlay() {
   if (townScreen === "shop") {
     ctx.fillStyle = PAL.gold;
     ctx.fillText("Gold: " + sharedGold, 36, y); y += 22;
+    ctx.fillStyle = PAL.gray;
+    ctx.fillText("Tap any item to buy", 36, y); y += 18;
     ctx.fillStyle = PAL.white;
     LOOT_TABLE.weapon.forEach(function (w, i) {
       var price = (i + 1) * 25;
       var rangedTag = w.ranged ? (" [range " + w.range + (w.returns ? ", returns" : "") + "]") : "";
-      ctx.fillText((w.emoji || "") + " " + w.name + " (+" + w.dmgBonus + " dmg)" + rangedTag + " - " + price + "g  [tap W" + (i + 1) + "]", 36, y); y += 18;
+      ctx.fillText((w.emoji || "") + " " + w.name + " (+" + w.dmgBonus + " dmg)" + rangedTag + " - " + price + "g", 36, y); y += 18;
     });
-    ctx.fillText("Potion (heal 20) - 12g  [tap P]", 36, y); y += 18;
+    ctx.fillText("Potion (heal 20) - 12g", 36, y); y += 18;
   } else if (townScreen === "armory") {
     ctx.fillStyle = PAL.gold;
     ctx.fillText("Gold: " + sharedGold, 36, y); y += 22;
+    ctx.fillStyle = PAL.gray;
+    ctx.fillText("Tap any item to buy", 36, y); y += 18;
     ctx.fillStyle = PAL.white;
     LOOT_TABLE.armor.forEach(function (a, i) {
       var price = (i + 1) * 30;
-      ctx.fillText(a.name + " (+" + a.defBonus + " def) - " + price + "g  [tap A" + (i + 1) + "]", 36, y); y += 18;
+      ctx.fillText(a.name + " (+" + a.defBonus + " def) - " + price + "g", 36, y); y += 18;
     });
   } else if (townScreen === "king") {
     ctx.fillStyle = PAL.white;
@@ -6523,14 +6527,14 @@ function handleTownTap(lx, ly) {
   if (lx >= xr.x && lx <= xr.x + xr.w && ly >= xr.y && ly <= xr.y + xr.h) { closeTownScreen(); return; }
 
   if (townScreen === "shop") {
-    var y = 115 + 22; // after gold line
+    var y = 115 + 22 + 18; // after gold line + "Tap any item to buy" line
     for (var i = 0; i < LOOT_TABLE.weapon.length; i++) {
       if (ly >= y - 12 && ly < y + 6) { buyItem("weapon", LOOT_TABLE.weapon[i], (i + 1) * 25); return; }
       y += 18;
     }
     if (ly >= y - 12 && ly < y + 6) { buyItem("potion", LOOT_TABLE.potion[1], 12); return; }
   } else if (townScreen === "armory") {
-    var ay = 115 + 22; // after gold line
+    var ay = 115 + 22 + 18; // after gold line + "Tap any item to buy" line
     for (var j = 0; j < LOOT_TABLE.armor.length; j++) {
       if (ly >= ay - 12 && ly < ay + 6) { buyItem("armor", LOOT_TABLE.armor[j], (j + 1) * 30); return; }
       ay += 18;
