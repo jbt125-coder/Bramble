@@ -4539,10 +4539,11 @@ function move(dx, dy) {
     stepMapMonsters();
   } else if (state.mode === "town" || state.mode === "islandTown") {
     stepAllRoamingEntities();
-    // the tavern keeper talks to you as soon as you're next to (or bump
-    // into) them — no need to press ACTION, unlike the other shopkeepers
-    var tavernNpc = roamingNpcAdjacent();
-    if (tavernNpc && tavernNpc.kind === "tavern") { openTavern(); return; }
+    // any roaming NPC (tavern keeper, weaponsmith, armorer) talks to you
+    // as soon as you're next to (or bump into) them — no need to press
+    // ACTION first
+    var roamingNpc = roamingNpcAdjacent();
+    if (roamingNpc) { talkToNpc(roamingNpc); return; }
   }
   renderAll();
 }
