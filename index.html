@@ -38,8 +38,8 @@
     gap: 3px;
   }
   .dpadBtn {
-    background: #000; border: 2px solid #6666ff; color: #6666ff;
-    font-size: 18px; cursor: pointer; touch-action: manipulation; font-family: inherit;
+    background: #000; border: 2px solid #8888ff; color: #8888ff;
+    font-size: 19px; cursor: pointer; touch-action: manipulation; font-family: inherit;
   }
   .dpadBtn:active { background: #111144; }
   #cmdBtns {
@@ -48,7 +48,7 @@
   }
   .cmdBtn {
     background: #000; border: 2px solid #ff5555; color: #ff5555;
-    font-size: 11px; padding: 9px 10px; cursor: pointer; touch-action: manipulation;
+    font-size: 12px; padding: 9px 10px; cursor: pointer; touch-action: manipulation;
     font-family: inherit; font-weight: bold; min-width: 64px;
   }
   .cmdBtn:active { background: #331111; }
@@ -196,20 +196,20 @@ var LOG_Y0 = BOTBAR_Y0 + BOTBAR_H;
 // ---------- palette ----------
 var PAL = {
   black: "#000000",
-  purple: "#6666ee",
+  purple: "#8888ff",
   purpleDark: "#3a3aa0",
-  green: "#22cc44",
+  green: "#33ee55",
   greenDark: "#116622",
   white: "#ffffff",
   brick: "#aa2222",
   brickDark: "#661111",
   water: "#2244aa",
   waterLight: "#3a66cc",
-  gray: "#888888",
-  yellow: "#ffee55",
-  red: "#ff4444",
+  gray: "#aaaaaa",
+  yellow: "#ffff66",
+  red: "#ff5555",
   skin: "#e0a878",
-  gold: "#ffcc33"
+  gold: "#ffd633"
 };
 
 // ============================================================
@@ -1740,6 +1740,21 @@ function px(x, y, w, h, color) {
   ctx.fillRect(x, y, w, h);
 }
 
+// Draws a line of text at the given font size, shrinking it (down to a
+// floor of 9px) only if it would otherwise overflow maxWidth — used for
+// shop rows whose longest variants (a ranged weapon's range/returns tag)
+// can run past the popup's edge at the normal size.
+function fillTextFitWidth(text, x, y, maxWidth, baseFontPx) {
+  var size = baseFontPx;
+  ctx.font = size + "px 'Courier New', monospace";
+  while (size > 9 && ctx.measureText(text).width > maxWidth) {
+    size -= 1;
+    ctx.font = size + "px 'Courier New', monospace";
+  }
+  ctx.fillText(text, x, y);
+  ctx.font = baseFontPx + "px 'Courier New', monospace";
+}
+
 // ============================================================
 // DECORATIVE BORDER (purple frame with corner/edge chevrons,
 // like the reference screenshots)
@@ -1777,7 +1792,7 @@ function drawMapBorder() {
 
   // coordinate readout above the map, e.g. "(7)(6)"
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   var coordStr = "(" + state.x + ")(" + state.y + ")";
@@ -1786,7 +1801,7 @@ function drawMapBorder() {
 
   // location name banner under the map
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.textAlign = "center";
   var label = modeLabel();
   if (state.mounted) label += "  (Mounted)";
@@ -1797,7 +1812,7 @@ function drawMapBorder() {
   var questLine = activeQuestLine();
   if (questLine) {
     ctx.fillStyle = PAL.gold;
-    ctx.font = "11px 'Courier New', monospace";
+    ctx.font = "12px 'Courier New', monospace";
     ctx.fillText(questLine, midX, LOCLABEL_Y + 27);
   }
   ctx.textAlign = "left";
@@ -2700,18 +2715,18 @@ function drawPartyMini(x, y, w, h, p) {
   ctx.lineWidth = 2;
   ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
 
-  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillStyle = p.alive ? PAL.white : PAL.red;
   ctx.textAlign = "left";
   ctx.fillText(p.name, x + 6, y + 15);
 
-  ctx.font = "bold 11px 'Courier New', monospace";
+  ctx.font = "bold 12px 'Courier New', monospace";
   ctx.fillStyle = PAL.gold;
   ctx.textAlign = "right";
   ctx.fillText(sharedGold + "G", x + w - 4, y + 15);
   ctx.textAlign = "left";
 
-  ctx.font = "11px 'Courier New', monospace";
+  ctx.font = "12px 'Courier New', monospace";
   ctx.fillStyle = PAL.white;
   var line1 = p.cls + " M:" + pad2(p.mana) + " L:" + pad2(p.lvl);
   ctx.fillText(line1, x + 6, y + 29);
@@ -2756,7 +2771,7 @@ function renderLogArea() {
   ctx.lineTo(LW, LOG_Y0 + 0.5);
   ctx.stroke();
 
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "13px 'Courier New', monospace";
   ctx.textAlign = "left";
   var lineH = 15;
   var maxLines = Math.floor((LH - LOG_Y0 - 6) / lineH);
@@ -2936,16 +2951,16 @@ function renderRunConfirmDialog() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillText("Leave the battle?", r.box.x + r.box.w / 2, r.box.y + 34);
-  ctx.font = "11px 'Courier New', monospace";
+  ctx.font = "12px 'Courier New', monospace";
   ctx.fillStyle = PAL.gray;
   ctx.fillText("Monsters may loot your gold.", r.box.x + r.box.w / 2, r.box.y + 54);
 
   ctx.strokeStyle = PAL.green;
   ctx.strokeRect(r.yes.x, r.yes.y, r.yes.w, r.yes.h);
   ctx.fillStyle = PAL.green;
-  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillText("YES", r.yes.x + r.yes.w / 2, r.yes.y + 21);
 
   ctx.strokeStyle = PAL.red;
@@ -2967,7 +2982,7 @@ function renderTownScreenOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 16px 'Courier New', monospace";
+  ctx.font = "bold 17px 'Courier New', monospace";
   var title = townScreen === "shop" ? "WEAPONSMITH" : townScreen === "armory" ? "ARMORY"
     : townScreen === "tavern" ? "TAVERN" : townScreen === "fountain" ? "FOUNTAIN"
     : townScreen === "king" ? "THRONE ROOM" : townScreen === "stable" ? "STABLE"
@@ -2977,7 +2992,7 @@ function renderTownScreenOverlay() {
     : townScreen === "robotKing" ? "THE ROBOT KING" : "HEALER";
   ctx.fillText(title, LW / 2, 90);
   ctx.textAlign = "left";
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "13px 'Courier New', monospace";
 
   // close X, always top-right of the popup
   drawCloseX();
@@ -2992,7 +3007,8 @@ function renderTownScreenOverlay() {
     LOOT_TABLE.weapon.forEach(function (w, i) {
       var price = (i + 1) * 25;
       var rangedTag = w.ranged ? (" [range " + w.range + (w.returns ? ", returns" : "") + "]") : "";
-      ctx.fillText((w.emoji || "") + " " + w.name + " (+" + w.dmgBonus + " dmg)" + rangedTag + " - " + price + "g", 36, y); y += 18;
+      var line = (w.emoji || "") + " " + w.name + " (+" + w.dmgBonus + " dmg)" + rangedTag + " - " + price + "g";
+      fillTextFitWidth(line, 36, y, LW - 56, 13); y += 18;
     });
     ctx.fillText("Potion (heal 20) - 12g", 36, y); y += 18;
   } else if (townScreen === "armory") {
@@ -3003,7 +3019,8 @@ function renderTownScreenOverlay() {
     ctx.fillStyle = PAL.white;
     LOOT_TABLE.armor.forEach(function (a, i) {
       var price = (i + 1) * 30;
-      ctx.fillText(a.name + " (+" + a.defBonus + " def) - " + price + "g", 36, y); y += 18;
+      var line = a.name + " (+" + a.defBonus + " def) - " + price + "g";
+      fillTextFitWidth(line, 36, y, LW - 56, 13); y += 18;
     });
   } else if (townScreen === "king") {
     ctx.fillStyle = PAL.white;
@@ -3191,10 +3208,10 @@ function renderCharacterSheetOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = p.alive ? PAL.white : PAL.red;
-  ctx.font = "bold 16px 'Courier New', monospace";
+  ctx.font = "bold 17px 'Courier New', monospace";
   ctx.fillText((p.clsEmoji ? p.clsEmoji + " " : "") + p.name + (p.alive ? "" : " (fallen)"), LW / 2, 90);
   ctx.textAlign = "left";
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "13px 'Courier New', monospace";
 
   drawCloseX();
 
@@ -3281,10 +3298,10 @@ function renderEquipPickerOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 15px 'Courier New', monospace";
   ctx.fillText("EQUIP " + cat.toUpperCase() + " — " + p.name, LW / 2, 165);
   ctx.textAlign = "left";
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "13px 'Courier New', monospace";
 
   drawCloseX(equipCloseXRect());
 
@@ -3342,10 +3359,10 @@ function renderPotionPickerOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 15px 'Courier New', monospace";
   ctx.fillText("DRINK POTION — " + p.name, LW / 2, 165);
   ctx.textAlign = "left";
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "13px 'Courier New', monospace";
 
   drawCloseX(equipCloseXRect());
 
@@ -4603,9 +4620,9 @@ function renderActionChoiceOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillText("What do you want to do?", r.box.x + r.box.w / 2, r.box.y + 24);
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "13px 'Courier New', monospace";
 
   actionChoices.forEach(function (c, i) {
     var row = r.rows[i];
@@ -4820,10 +4837,10 @@ function renderMenuOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 16px 'Courier New', monospace";
+  ctx.font = "bold 17px 'Courier New', monospace";
   ctx.fillText("MENU", LW / 2, 90);
   ctx.textAlign = "left";
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "13px 'Courier New', monospace";
   drawCloseX();
 
   var y = 120;
@@ -5028,16 +5045,16 @@ function renderCyberDriveConfirmDialog() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillText("Engage the cyber drive?", r.box.x + r.box.w / 2, r.box.y + 34);
-  ctx.font = "11px 'Courier New', monospace";
+  ctx.font = "12px 'Courier New', monospace";
   ctx.fillStyle = PAL.gray;
   ctx.fillText("A wild flight through space to Cyber World.", r.box.x + r.box.w / 2, r.box.y + 54);
 
   ctx.strokeStyle = PAL.green;
   ctx.strokeRect(r.yes.x, r.yes.y, r.yes.w, r.yes.h);
   ctx.fillStyle = PAL.green;
-  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillText("YES", r.yes.x + r.yes.w / 2, r.yes.y + 21);
 
   ctx.strokeStyle = PAL.red;
@@ -5316,7 +5333,7 @@ function drawSpacePlanet(p) {
   ctx.beginPath(); ctx.arc(p.r * 0.35, p.r * 0.3, p.r * 0.14, 0, Math.PI * 2); ctx.fill();
   ctx.textAlign = "center";
   ctx.fillStyle = "#39ff88";
-  ctx.font = "bold 10px 'Courier New', monospace";
+  ctx.font = "bold 11px 'Courier New', monospace";
   ctx.fillText("CYBER PLANET", 0, -p.r - 10);
   ctx.textAlign = "left";
   ctx.restore();
@@ -5327,9 +5344,9 @@ function drawSpacePlanet(p) {
 function renderSpaceflightHud() {
   ctx.textAlign = "center";
   ctx.fillStyle = "#39ff88";
-  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillText("ENGAGING CYBER DRIVE", LW / 2, 20);
-  ctx.font = "11px 'Courier New', monospace";
+  ctx.font = "12px 'Courier New', monospace";
   ctx.fillStyle = "#aaaaaa";
   ctx.fillText("Meteorites: " + spaceMeteorsDestroyed + "/" + SPACE_METEOR_GOAL, LW / 2, 36);
   ctx.textAlign = "left";
@@ -5349,7 +5366,7 @@ function renderSpaceflightHud() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#66ccff";
-  ctx.font = "10px 'Courier New', monospace";
+  ctx.font = "11px 'Courier New', monospace";
   ctx.fillText(Math.round(dist) + "m to Cyber Planet", LW / 2, 78);
   ctx.textAlign = "left";
 }
@@ -5665,16 +5682,16 @@ function renderHordeAudioConfirmDialog() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillText("Enable the audio?", r.box.x + r.box.w / 2, r.box.y + 34);
-  ctx.font = "11px 'Courier New', monospace";
+  ctx.font = "12px 'Courier New', monospace";
   ctx.fillStyle = PAL.gray;
   ctx.fillText("Your headphones guard against the horde's screams.", r.box.x + r.box.w / 2, r.box.y + 54);
 
   ctx.strokeStyle = PAL.green;
   ctx.strokeRect(r.yes.x, r.yes.y, r.yes.w, r.yes.h);
   ctx.fillStyle = PAL.green;
-  ctx.font = "bold 13px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillText("YES", r.yes.x + r.yes.w / 2, r.yes.y + 21);
 
   ctx.strokeStyle = PAL.red;
@@ -5989,7 +6006,7 @@ function renderHordeArena() {
       ctx.fillStyle = "rgba(255,0,0,0.5)";
       ctx.beginPath(); ctx.arc(sx, sy, 11, 0, Math.PI * 2); ctx.fill();
     }
-    ctx.font = "18px serif";
+    ctx.font = "19px serif";
     ctx.fillText(MONSTER_EMOJI["Cyber Zombie"], sx, sy);
   });
   ctx.restore();
@@ -6009,7 +6026,7 @@ function renderHordeArena() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.gold;
-  ctx.font = "11px 'Courier New', monospace";
+  ctx.font = "12px 'Courier New', monospace";
   ctx.fillText("Wave " + hordeWave + "/" + HORDE_WAVE_COUNTS.length + " -- " + hordeZombies.length + " zombies left",
     MAP_INNER_X0 + MAP_INNER_W / 2, MAP_INNER_Y0 + 14);
   ctx.textAlign = "left";
