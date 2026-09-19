@@ -1743,6 +1743,7 @@ function modeLabel() {
   if (state.mode === "moonTown") return "LUNA STATION";
   if (state.mode === "cyber") return "CYBER WORLD";
   if (state.mode === "combat") return "COMBAT";
+  if (state.mode === "zombieHorde") return "TOWER SIEGE";
   // while actually sailing, show the live wind reading instead of the
   // place name — this is the only spot the wind system is visible outside
   // the log, so it should reflect `wind.dir`, not a static place name
@@ -2739,6 +2740,8 @@ function renderAll() {
     renderCombatScreen();
   } else if (state.mode === "spaceflight") {
     renderSpaceflightScreen();
+  } else if (state.mode === "zombieHorde") {
+    renderHordeScreen();
   } else {
     renderTopBar();
     drawMapBorder();
@@ -4012,7 +4015,7 @@ function findIslandArrivalSpot() {
 }
 
 function move(dx, dy) {
-  if (state.mode === "combat" || state.mode === "spaceflight" || townScreen || awaitingCannonDirection || confirmingCyberDrive) return;
+  if (state.mode === "combat" || state.mode === "spaceflight" || state.mode === "zombieHorde" || townScreen || awaitingCannonDirection || confirmingCyberDrive) return;
   var facing = dx === -1 ? "W" : dx === 1 ? "E" : dy === -1 ? "N" : dy === 1 ? "S" : state.facing;
   state.facing = facing;
 
@@ -4562,7 +4565,7 @@ function cmdCast() {
 }
 
 function cmdMenu() {
-  if (townScreen || confirmingRun || characterSheetIndex !== null || state.mode === "spaceflight") return;
+  if (townScreen || confirmingRun || characterSheetIndex !== null || state.mode === "spaceflight" || state.mode === "zombieHorde") return;
   menuScreen = "main";
   renderAll();
 }
@@ -5513,13 +5516,224 @@ function openCyberTower() {
     pushLog("draws out the Cyber Blasters kept here for this moment!");
     for (var i = 0; i < party.length; i++) inventory.push({ category: "weapon", item: CYBER_BLASTER });
     pushLog("Received " + party.length + " Cyber Blasters!");
-    pushLog("The noise draws zombies straight to you!");
-    var group = buildMonsterGroup(CYBER_ZOMBIE_DEF, true);
-    enterArena(group, state.mode, "cyberTower");
+    pushLog("The noise draws a whole horde of zombies straight to you!");
+    enterZombieHorde();
     return;
   }
   pushLog("The tower's weapons cache stands empty now.");
   renderAll();
+}
+
+// ============================================================
+// ZOMBIE HORDE — the tower fight plays out as a wave-survival lane
+// shooter instead of the usual turn-based arena: the party holds a
+// fixed baseline, moves left/right, auto-fires upward, and a whole
+// wave of zombies rushes down from the top at once. Clear all 3 waves
+// to win; a full party wipe uses the same hospital respawn as any
+// other defeat.
+// ============================================================
+var hordeRunning = false;
+var hordeSquadX = 0;
+var hordeZombies = [];
+var hordeBullets = [];
+var hordeWave = 0;
+var HORDE_WAVE_COUNTS = [5, 8, 12];
+var hordeKeysHeld = { left: false, right: false };
+var HORDE_MOVE_SPEED = 3.2;     // px per 16.67ms frame, continuous while held
+var hordeFireTimer = 0;
+var HORDE_FIRE_INTERVAL = 260;  // ms between auto-fire volleys
+var HORDE_BULLET_SPEED = 7;
+var hordeLastTick = 0;
+
+function hordeSetHeld(key, val) {
+  if (state.mode !== "zombieHorde") return;
+  if (key === "left" || key === "right") hordeKeysHeld[key] = val;
+}
+
+function enterZombieHorde() {
+  state.mode = "zombieHorde";
+  hordeSquadX = MAP_INNER_W / 2;
+  hordeZombies = [];
+  hordeBullets = [];
+  hordeWave = 0;
+  hordeKeysHeld = { left: false, right: false };
+  hordeFireTimer = 0;
+  hordeLastTick = performance.now();
+  hordeRunning = true;
+  pushLog("-----The zombie horde descends!-----");
+  startHordeWave();
+  renderAll();
+  requestAnimationFrame(hordeTick);
+}
+
+function startHordeWave() {
+  hordeWave++;
+  var count = HORDE_WAVE_COUNTS[Math.min(hordeWave - 1, HORDE_WAVE_COUNTS.length - 1)];
+  for (var i = 0; i < count; i++) hordeZombies.push(makeHordeZombie());
+  pushLog("Wave " + hordeWave + ": " + count + " zombies incoming!");
+}
+
+function makeHordeZombie() {
+  var hp = 14 + Math.floor(Math.random() * 8) + (hordeWave - 1) * 4;
+  return {
+    x: 20 + Math.random() * (MAP_INNER_W - 40), y: -20,
+    hp: hp, maxHp: hp,
+    speed: 0.5 + Math.random() * 0.3 + (hordeWave - 1) * 0.08,
+    swerve: (Math.random() - 0.5) * 0.03, swerveT: Math.random() * Math.PI * 2,
+    hitFlashUntil: 0
+  };
+}
+
+// One randomly chosen still-living party member takes the hit — matches
+// how a real turn-based fight can knock anyone out, not just the leader.
+function hordeDamagePartyMember() {
+  var alive = party.filter(function (p) { return p.alive; });
+  if (alive.length === 0) return;
+  var p = alive[Math.floor(Math.random() * alive.length)];
+  var dmg = 3 + Math.floor(Math.random() * 6);
+  p.hp -= dmg;
+  if (p.hp <= 0) {
+    p.hp = 0; p.alive = false;
+    pushLog(p.name + " is overrun by the horde and falls!");
+  }
+}
+
+function hordeTick(now) {
+  if (!hordeRunning) return;
+  var dt = Math.min(now - hordeLastTick, 50);
+  hordeLastTick = now;
+
+  if (hordeKeysHeld.left) hordeSquadX -= HORDE_MOVE_SPEED * (dt / 16.67);
+  if (hordeKeysHeld.right) hordeSquadX += HORDE_MOVE_SPEED * (dt / 16.67);
+  hordeSquadX = Math.max(20, Math.min(MAP_INNER_W - 20, hordeSquadX));
+
+  hordeFireTimer -= dt;
+  if (hordeFireTimer <= 0) {
+    hordeFireTimer = HORDE_FIRE_INTERVAL;
+    var aliveCount = Math.max(1, party.filter(function (p) { return p.alive; }).length);
+    for (var i = 0; i < aliveCount; i++) {
+      hordeBullets.push({ x: hordeSquadX + (i - (aliveCount - 1) / 2) * 14, y: MAP_INNER_H - 40 });
+    }
+  }
+
+  hordeBullets = hordeBullets.filter(function (b) { return b.y > -10; });
+  hordeBullets.forEach(function (b) { b.y -= HORDE_BULLET_SPEED * (dt / 16.67); });
+
+  hordeZombies.forEach(function (z) {
+    z.swerveT += dt * 0.003;
+    z.x += Math.sin(z.swerveT) * z.swerve * dt;
+    z.y += z.speed * (dt / 16.67);
+  });
+
+  for (var bi = hordeBullets.length - 1; bi >= 0; bi--) {
+    var b = hordeBullets[bi];
+    for (var zi = 0; zi < hordeZombies.length; zi++) {
+      var z = hordeZombies[zi];
+      if (Math.abs(b.x - z.x) < 12 && Math.abs(b.y - z.y) < 14) {
+        z.hp -= 8;
+        z.hitFlashUntil = now + 120;
+        hordeBullets.splice(bi, 1);
+        if (z.hp <= 0) hordeZombies.splice(zi, 1);
+        break;
+      }
+    }
+  }
+
+  var baselineY = MAP_INNER_H - 46;
+  for (var zi2 = hordeZombies.length - 1; zi2 >= 0; zi2--) {
+    if (hordeZombies[zi2].y >= baselineY) {
+      hordeZombies.splice(zi2, 1);
+      hordeDamagePartyMember();
+    }
+  }
+
+  if (!partyAlive()) {
+    hordeRunning = false;
+    hordeDefeat();
+    return;
+  }
+
+  if (hordeZombies.length === 0) {
+    if (hordeWave >= HORDE_WAVE_COUNTS.length) {
+      hordeRunning = false;
+      hordeVictory();
+      return;
+    }
+    startHordeWave();
+  }
+
+  renderAll();
+  requestAnimationFrame(hordeTick);
+}
+
+function hordeVictory() {
+  pushLog("-----The horde is cleared!-----");
+  pushLog("Your party holds the tower.");
+  hordeZombies = []; hordeBullets = [];
+  state.mode = "cyber";
+  renderAll();
+}
+
+function hordeDefeat() {
+  pushLog("-----The horde overwhelms your party-----");
+  party[0].alive = true;
+  party[0].hp = party[0].maxHp;
+  sharedGold = Math.floor(sharedGold * 0.5);
+  hordeZombies = []; hordeBullets = [];
+  respawnAfterDefeat();
+  pushLog("You wake at the hospital. Half your gold is gone.");
+  if (party.some(function (p, i) { return i > 0 && !p.alive; })) {
+    pushLog("The rest of your party lies fallen. Revive them here.");
+  }
+  renderAll();
+}
+
+function renderHordeScreen() {
+  px(0, 0, LW, LH, PAL.black);
+  renderTopBar();
+  drawMapBorder();
+  renderHordeArena();
+  renderBottomBar();
+  renderLogArea();
+}
+
+function renderHordeArena() {
+  px(MAP_INNER_X0, MAP_INNER_Y0, MAP_INNER_W, MAP_INNER_H, "#0a0a0a");
+
+  var now = performance.now();
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  hordeZombies.forEach(function (z) {
+    var sx = MAP_INNER_X0 + z.x, sy = MAP_INNER_Y0 + z.y;
+    if (now < z.hitFlashUntil) {
+      ctx.fillStyle = "rgba(255,0,0,0.5)";
+      ctx.beginPath(); ctx.arc(sx, sy, 11, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.font = "18px serif";
+    ctx.fillText(MONSTER_EMOJI["Cyber Zombie"], sx, sy);
+  });
+  ctx.restore();
+
+  ctx.fillStyle = "#ffe066";
+  hordeBullets.forEach(function (b) {
+    px(MAP_INNER_X0 + b.x - 1, MAP_INNER_Y0 + b.y - 4, 2, 8, "#ffe066");
+  });
+
+  var aliveParty = party.filter(function (p) { return p.alive; });
+  var baseY = MAP_INNER_H - 30;
+  aliveParty.forEach(function (p, i) {
+    var sx = MAP_INNER_X0 + hordeSquadX + (i - (aliveParty.length - 1) / 2) * 16;
+    var sy = MAP_INNER_Y0 + baseY;
+    drawHuman(sx, sy, TILE * 0.9, p.color, "N");
+  });
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = PAL.gold;
+  ctx.font = "11px 'Courier New', monospace";
+  ctx.fillText("Wave " + hordeWave + "/" + HORDE_WAVE_COUNTS.length + " -- " + hordeZombies.length + " zombies left",
+    MAP_INNER_X0 + MAP_INNER_W / 2, MAP_INNER_Y0 + 14);
+  ctx.textAlign = "left";
 }
 function openVaultChest(x, y) {
   var grid = currentGrid();
@@ -5894,26 +6108,28 @@ function healerRevive(idx) {
 // ============================================================
 // INPUT
 // ============================================================
-document.getElementById("btnN").onclick = function () { if (state.mode === "spaceflight") return; if (awaitingShotDirection) fireRangedWeapon("N"); else if (awaitingCannonDirection) fireCannon("N"); else if (state.mode === "combat") arenaMove(0, -1); else move(0, -1); };
-document.getElementById("btnS").onclick = function () { if (state.mode === "spaceflight") return; if (awaitingShotDirection) fireRangedWeapon("S"); else if (awaitingCannonDirection) fireCannon("S"); else if (state.mode === "combat") arenaMove(0, 1); else move(0, 1); };
-document.getElementById("btnE").onclick = function () { if (state.mode === "spaceflight") return; if (awaitingShotDirection) fireRangedWeapon("E"); else if (awaitingCannonDirection) fireCannon("E"); else if (state.mode === "combat") arenaMove(1, 0); else move(1, 0); };
-document.getElementById("btnW").onclick = function () { if (state.mode === "spaceflight") return; if (awaitingShotDirection) fireRangedWeapon("W"); else if (awaitingCannonDirection) fireCannon("W"); else if (state.mode === "combat") arenaMove(-1, 0); else move(-1, 0); };
+document.getElementById("btnN").onclick = function () { if (state.mode === "spaceflight" || state.mode === "zombieHorde") return; if (awaitingShotDirection) fireRangedWeapon("N"); else if (awaitingCannonDirection) fireCannon("N"); else if (state.mode === "combat") arenaMove(0, -1); else move(0, -1); };
+document.getElementById("btnS").onclick = function () { if (state.mode === "spaceflight" || state.mode === "zombieHorde") return; if (awaitingShotDirection) fireRangedWeapon("S"); else if (awaitingCannonDirection) fireCannon("S"); else if (state.mode === "combat") arenaMove(0, 1); else move(0, 1); };
+document.getElementById("btnE").onclick = function () { if (state.mode === "spaceflight" || state.mode === "zombieHorde") return; if (awaitingShotDirection) fireRangedWeapon("E"); else if (awaitingCannonDirection) fireCannon("E"); else if (state.mode === "combat") arenaMove(1, 0); else move(1, 0); };
+document.getElementById("btnW").onclick = function () { if (state.mode === "spaceflight" || state.mode === "zombieHorde") return; if (awaitingShotDirection) fireRangedWeapon("W"); else if (awaitingCannonDirection) fireCannon("W"); else if (state.mode === "combat") arenaMove(-1, 0); else move(-1, 0); };
 
-// Space-flight controls are hold-based (press and hold to turn/thrust/fire,
-// same as the reference space-ranger game), wired via pointerdown/up
-// instead of onclick so a continuous press is actually continuous.
-function bindSpaceHold(btnId, key) {
+// Space-flight and zombie-horde controls are both hold-based (press and
+// hold to move/turn/thrust/fire), wired via pointerdown/up instead of
+// onclick so a continuous press is actually continuous. Each button
+// notifies both mode handlers; whichever mode is actually active is the
+// only one that does anything with it.
+function bindDirectionalHold(btnId, key) {
   var el = document.getElementById(btnId);
-  el.addEventListener("pointerdown", function (e) { e.preventDefault(); spaceSetHeld(key, true); });
+  el.addEventListener("pointerdown", function (e) { e.preventDefault(); spaceSetHeld(key, true); hordeSetHeld(key, true); });
   ["pointerup", "pointerleave", "pointercancel"].forEach(function (evt) {
-    el.addEventListener(evt, function () { spaceSetHeld(key, false); });
+    el.addEventListener(evt, function () { spaceSetHeld(key, false); hordeSetHeld(key, false); });
   });
 }
-bindSpaceHold("btnW", "left");
-bindSpaceHold("btnE", "right");
-bindSpaceHold("btnN", "thrust");
-bindSpaceHold("btnS", "thrust");
-bindSpaceHold("btnFire", "fire");
+bindDirectionalHold("btnW", "left");
+bindDirectionalHold("btnE", "right");
+bindDirectionalHold("btnN", "thrust");
+bindDirectionalHold("btnS", "thrust");
+bindDirectionalHold("btnFire", "fire");
 document.getElementById("btnAttack").onclick = function () {
   if (state.mode === "combat") { combatPlayerAttack(); return; }
   if (townScreen || confirmingRun) return;
@@ -5944,6 +6160,11 @@ document.addEventListener("keydown", function (e) {
     else if (e.key === " " || e.key === "f" || e.key === "F") spaceSetHeld("fire", true);
     return;
   }
+  if (state.mode === "zombieHorde") {
+    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") hordeSetHeld("left", true);
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") hordeSetHeld("right", true);
+    return;
+  }
   if (awaitingShotDirection) {
     if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") fireRangedWeapon("N");
     else if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") fireRangedWeapon("S");
@@ -5970,11 +6191,17 @@ document.addEventListener("keydown", function (e) {
 });
 
 document.addEventListener("keyup", function (e) {
-  if (state.mode !== "spaceflight") return;
-  if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") spaceSetHeld("left", false);
-  else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") spaceSetHeld("right", false);
-  else if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") spaceSetHeld("thrust", false);
-  else if (e.key === " " || e.key === "f" || e.key === "F") spaceSetHeld("fire", false);
+  if (state.mode === "spaceflight") {
+    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") spaceSetHeld("left", false);
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") spaceSetHeld("right", false);
+    else if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") spaceSetHeld("thrust", false);
+    else if (e.key === " " || e.key === "f" || e.key === "F") spaceSetHeld("fire", false);
+    return;
+  }
+  if (state.mode === "zombieHorde") {
+    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") hordeSetHeld("left", false);
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") hordeSetHeld("right", false);
+  }
 });
 
 // ============================================================
