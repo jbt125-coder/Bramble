@@ -38,8 +38,8 @@
     gap: 3px;
   }
   .dpadBtn {
-    background: #000; border: 2px solid #8888ff; color: #8888ff;
-    font-size: 19px; cursor: pointer; touch-action: manipulation; font-family: inherit;
+    background: #000; border: 2px solid #aaaaff; color: #aaaaff;
+    font-size: 21px; font-weight: bold; cursor: pointer; touch-action: manipulation; font-family: inherit;
   }
   .dpadBtn:active { background: #111144; }
   #cmdBtns {
@@ -47,8 +47,8 @@
     flex: 1; align-content: center; justify-content: flex-end;
   }
   .cmdBtn {
-    background: #000; border: 2px solid #ff5555; color: #ff5555;
-    font-size: 12px; padding: 9px 10px; cursor: pointer; touch-action: manipulation;
+    background: #000; border: 2px solid #ff6666; color: #ff6666;
+    font-size: 13px; padding: 9px 10px; cursor: pointer; touch-action: manipulation;
     font-family: inherit; font-weight: bold; min-width: 64px;
   }
   .cmdBtn:active { background: #331111; }
@@ -57,16 +57,10 @@
     font-size: 11px; padding: 8px; z-index: 999; display: none; white-space: pre-wrap;
     max-height: 40vh; overflow: auto;
   }
-  /* Music player — same mechanism as the reference zombie game: a gear
-     button opens a small panel for pasting a YouTube link, played on
-     loop through a hidden iframe player. */
-  #cogBtn {
-    position: fixed; top: 6px; right: 6px; z-index: 30;
-    background: rgba(0,0,0,0.85); border: 2px solid #8855ff; color: #8855ff;
-    border-radius: 50%; width: 30px; height: 30px; font-size: 15px;
-    cursor: pointer; touch-action: manipulation;
-    display: flex; align-items: center; justify-content: center; padding: 0;
-  }
+  /* Music player — same mechanism as the reference zombie game: a small
+     panel for pasting a YouTube link, played on loop through a hidden
+     iframe player. Opened from a button on the canvas-drawn MENU screen
+     (see renderMenuOverlay), not a floating page button. */
   #cogMenuOverlay {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(0,0,0,0.8); z-index: 80;
@@ -131,8 +125,6 @@
 
 <div id="errBox"></div>
 
-<button id="cogBtn" title="Music">&#9881;</button>
-
 <div id="cogMenuOverlay">
   <div id="cogCard">
     <button id="closeCog">&#10005;</button>
@@ -196,20 +188,20 @@ var LOG_Y0 = BOTBAR_Y0 + BOTBAR_H;
 // ---------- palette ----------
 var PAL = {
   black: "#000000",
-  purple: "#8888ff",
+  purple: "#aaaaff",
   purpleDark: "#3a3aa0",
-  green: "#33ee55",
+  green: "#55ff77",
   greenDark: "#116622",
   white: "#ffffff",
   brick: "#aa2222",
   brickDark: "#661111",
   water: "#2244aa",
   waterLight: "#3a66cc",
-  gray: "#aaaaaa",
-  yellow: "#ffff66",
-  red: "#ff5555",
+  gray: "#cccccc",
+  yellow: "#ffff88",
+  red: "#ff6666",
   skin: "#e0a878",
-  gold: "#ffd633"
+  gold: "#ffe044"
 };
 
 // ============================================================
@@ -1746,13 +1738,57 @@ function px(x, y, w, h, color) {
 // can run past the popup's edge at the normal size.
 function fillTextFitWidth(text, x, y, maxWidth, baseFontPx) {
   var size = baseFontPx;
-  ctx.font = size + "px 'Courier New', monospace";
+  ctx.font = "bold " + size + "px 'Courier New', monospace";
   while (size > 9 && ctx.measureText(text).width > maxWidth) {
     size -= 1;
-    ctx.font = size + "px 'Courier New', monospace";
+    ctx.font = "bold " + size + "px 'Courier New', monospace";
   }
   ctx.fillText(text, x, y);
-  ctx.font = baseFontPx + "px 'Courier New', monospace";
+  ctx.font = "bold " + baseFontPx + "px 'Courier New', monospace";
+}
+
+// Wraps `text` at word boundaries to fit within maxWidth (measured at
+// whatever ctx.font is currently set), drawing each line lineHeight
+// apart starting at (x, y). Returns the y position just below the last
+// line drawn. Used for narrative dialogue instead of hand-splitting a
+// quote into fixed-length lines, which breaks the moment the font size
+// changes.
+function fillWrappedText(text, x, y, maxWidth, lineHeight) {
+  var words = text.split(" ");
+  var line = "";
+  for (var i = 0; i < words.length; i++) {
+    var test = line ? line + " " + words[i] : words[i];
+    if (line && ctx.measureText(test).width > maxWidth) {
+      ctx.fillText(line, x, y);
+      y += lineHeight;
+      line = words[i];
+    } else {
+      line = test;
+    }
+  }
+  if (line) { ctx.fillText(line, x, y); y += lineHeight; }
+  return y;
+}
+
+// Same idea as fillWrappedText, but for center-aligned text (confirm
+// dialogs' subtitle line) — wraps around a horizontal center point
+// instead of a left edge.
+function fillWrappedTextCentered(text, cx, y, maxWidth, lineHeight) {
+  var words = text.split(" ");
+  var lines = [];
+  var line = "";
+  for (var i = 0; i < words.length; i++) {
+    var test = line ? line + " " + words[i] : words[i];
+    if (line && ctx.measureText(test).width > maxWidth) {
+      lines.push(line);
+      line = words[i];
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  for (var j = 0; j < lines.length; j++) ctx.fillText(lines[j], cx, y + j * lineHeight);
+  return y + lines.length * lineHeight;
 }
 
 // ============================================================
@@ -1792,7 +1828,7 @@ function drawMapBorder() {
 
   // coordinate readout above the map, e.g. "(7)(6)"
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 16px 'Courier New', monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   var coordStr = "(" + state.x + ")(" + state.y + ")";
@@ -1801,7 +1837,7 @@ function drawMapBorder() {
 
   // location name banner under the map
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 16px 'Courier New', monospace";
   ctx.textAlign = "center";
   var label = modeLabel();
   if (state.mounted) label += "  (Mounted)";
@@ -1812,7 +1848,7 @@ function drawMapBorder() {
   var questLine = activeQuestLine();
   if (questLine) {
     ctx.fillStyle = PAL.gold;
-    ctx.font = "12px 'Courier New', monospace";
+    ctx.font = "bold 14px 'Courier New', monospace";
     ctx.fillText(questLine, midX, LOCLABEL_Y + 27);
   }
   ctx.textAlign = "left";
@@ -2715,18 +2751,18 @@ function drawPartyMini(x, y, w, h, p) {
   ctx.lineWidth = 2;
   ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
 
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 16px 'Courier New', monospace";
   ctx.fillStyle = p.alive ? PAL.white : PAL.red;
   ctx.textAlign = "left";
   ctx.fillText(p.name, x + 6, y + 15);
 
-  ctx.font = "bold 12px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillStyle = PAL.gold;
   ctx.textAlign = "right";
   ctx.fillText(sharedGold + "G", x + w - 4, y + 15);
   ctx.textAlign = "left";
 
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillStyle = PAL.white;
   var line1 = p.cls + " M:" + pad2(p.mana) + " L:" + pad2(p.lvl);
   ctx.fillText(line1, x + 6, y + 29);
@@ -2771,7 +2807,7 @@ function renderLogArea() {
   ctx.lineTo(LW, LOG_Y0 + 0.5);
   ctx.stroke();
 
-  ctx.font = "13px 'Courier New', monospace";
+  ctx.font = "bold 15px 'Courier New', monospace";
   ctx.textAlign = "left";
   var lineH = 15;
   var maxLines = Math.floor((LH - LOG_Y0 - 6) / lineH);
@@ -2924,7 +2960,7 @@ function renderArena() {
 // (X behaves the same as No: stay and keep fighting)
 // ============================================================
 function runConfirmRects() {
-  var boxW = 260, boxH = 130;
+  var boxW = 320, boxH = 150;
   var boxX = LW / 2 - boxW / 2, boxY = LH / 2 - boxH / 2;
   return {
     box: { x: boxX, y: boxY, w: boxW, h: boxH },
@@ -2951,16 +2987,16 @@ function renderRunConfirmDialog() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 16px 'Courier New', monospace";
   ctx.fillText("Leave the battle?", r.box.x + r.box.w / 2, r.box.y + 34);
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillStyle = PAL.gray;
-  ctx.fillText("Monsters may loot your gold.", r.box.x + r.box.w / 2, r.box.y + 54);
+  fillWrappedTextCentered("Monsters may loot your gold.", r.box.x + r.box.w / 2, r.box.y + 54, r.box.w - 30, 18);
 
   ctx.strokeStyle = PAL.green;
   ctx.strokeRect(r.yes.x, r.yes.y, r.yes.w, r.yes.h);
   ctx.fillStyle = PAL.green;
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 16px 'Courier New', monospace";
   ctx.fillText("YES", r.yes.x + r.yes.w / 2, r.yes.y + 21);
 
   ctx.strokeStyle = PAL.red;
@@ -2982,7 +3018,7 @@ function renderTownScreenOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 17px 'Courier New', monospace";
+  ctx.font = "bold 19px 'Courier New', monospace";
   var title = townScreen === "shop" ? "WEAPONSMITH" : townScreen === "armory" ? "ARMORY"
     : townScreen === "tavern" ? "TAVERN" : townScreen === "fountain" ? "FOUNTAIN"
     : townScreen === "king" ? "THRONE ROOM" : townScreen === "stable" ? "STABLE"
@@ -2992,12 +3028,13 @@ function renderTownScreenOverlay() {
     : townScreen === "robotKing" ? "THE ROBOT KING" : "HEALER";
   ctx.fillText(title, LW / 2, 90);
   ctx.textAlign = "left";
-  ctx.font = "13px 'Courier New', monospace";
+  ctx.font = "bold 15px 'Courier New', monospace";
 
   // close X, always top-right of the popup
   drawCloseX();
 
   var y = 115;
+  var TW = LW - 76; // usable text width inside the popup, for word-wrapping
   if (townScreen === "shop") {
     ctx.fillStyle = PAL.gold;
     ctx.fillText("Gold: " + sharedGold, 36, y); y += 22;
@@ -3008,7 +3045,7 @@ function renderTownScreenOverlay() {
       var price = (i + 1) * 25;
       var rangedTag = w.ranged ? (" [range " + w.range + (w.returns ? ", returns" : "") + "]") : "";
       var line = (w.emoji || "") + " " + w.name + " (+" + w.dmgBonus + " dmg)" + rangedTag + " - " + price + "g";
-      fillTextFitWidth(line, 36, y, LW - 56, 13); y += 18;
+      fillTextFitWidth(line, 36, y, LW - 56, 15); y += 18;
     });
     ctx.fillText("Potion (heal 20) - 12g", 36, y); y += 18;
   } else if (townScreen === "armory") {
@@ -3020,31 +3057,26 @@ function renderTownScreenOverlay() {
     LOOT_TABLE.armor.forEach(function (a, i) {
       var price = (i + 1) * 30;
       var line = a.name + " (+" + a.defBonus + " def) - " + price + "g";
-      fillTextFitWidth(line, 36, y, LW - 56, 13); y += 18;
+      fillTextFitWidth(line, 36, y, LW - 56, 15); y += 18;
     });
   } else if (townScreen === "king") {
     ctx.fillStyle = PAL.white;
     if (state.mode === "islandTown") {
       if (hasPirateFlag) {
-        ctx.fillText("\"That's my flag!\" the old pirate grins.", 36, y); y += 18;
-        ctx.fillText("\"Knew you had it in you.\"", 36, y); y += 20;
+        y = fillWrappedText("\"That's my flag!\" the old pirate grins.", 36, y, TW, 18); y += 2;
+        y = fillWrappedText("\"Knew you had it in you.\"", 36, y, TW, 18);
       } else if (thiefKingQuestStarted) {
-        ctx.fillText("\"Still looking for that tornado? It's out", 36, y); y += 18;
-        ctx.fillText("there, past the harbor. Dive in if you dare.\"", 36, y); y += 20;
+        y = fillWrappedText("\"Still looking for that tornado? It's out there, past the harbor. Dive in if you dare.\"", 36, y, TW, 18);
       } else {
-        ctx.fillText("\"Truth is, I'm no harbor master —", 36, y); y += 18;
-        ctx.fillText("I'm the Thief King. Lost my colors to a", 36, y); y += 18;
-        ctx.fillText("tornado out past these waters.\"", 36, y); y += 18;
-        ctx.fillText("\"Sail into it, if you dare, and win it back.\"", 36, y); y += 20;
+        y = fillWrappedText("\"Truth is, I'm no harbor master — I'm the Thief King. Lost my colors to a tornado out past these waters.\"", 36, y, TW, 18); y += 2;
+        y = fillWrappedText("\"Sail into it, if you dare, and win it back.\"", 36, y, TW, 18);
       }
     } else if (wizardQuestComplete) {
-      ctx.fillText("\"Well met, hero.\"", 36, y); y += 20;
-      ctx.fillText("\"The realm still remembers your deed.\"", 36, y); y += 20;
+      y = fillWrappedText("\"Well met, hero.\"", 36, y, TW, 18); y += 2;
+      y = fillWrappedText("\"The realm still remembers your deed.\"", 36, y, TW, 18);
     } else {
-      ctx.fillText("\"An Archwizard has fouled our", 36, y); y += 18;
-      ctx.fillText("dungeon's deepest hall.\"", 36, y); y += 20;
-      ctx.fillText("\"Slay him, bring his wand,", 36, y); y += 18;
-      ctx.fillText("and 500 gold is yours.\"", 36, y); y += 22;
+      y = fillWrappedText("\"An Archwizard has fouled our dungeon's deepest hall.\"", 36, y, TW, 18); y += 2;
+      y = fillWrappedText("\"Slay him, bring his wand, and 500 gold is yours.\"", 36, y, TW, 18); y += 4;
       if (hasWizardsWand) {
         ctx.fillStyle = PAL.gold;
         ctx.fillText("You have the wand!  [tap T]", 36, y); y += 18;
@@ -3066,7 +3098,7 @@ function renderTownScreenOverlay() {
     ctx.fillStyle = PAL.gold;
     ctx.fillText("Gold: " + sharedGold, 36, y); y += 22;
     ctx.fillStyle = PAL.white;
-    ctx.fillText(MOON_ARMOR.name + " (+" + MOON_ARMOR.defBonus + " def) - 200g  [tap M]", 36, y); y += 18;
+    fillTextFitWidth(MOON_ARMOR.name + " (+" + MOON_ARMOR.defBonus + " def) - 200g  [tap M]", 36, y, TW, 15); y += 18;
   } else if (townScreen === "tavern") {
     if (tavernRecruit) {
       ctx.fillStyle = PAL.white;
@@ -3135,60 +3167,46 @@ function renderTownScreenOverlay() {
   } else if (townScreen === "questBoy") {
     ctx.fillStyle = PAL.white;
     if (dogQuestComplete) {
-      ctx.fillText("\"Thank you again for finding " + DOG_NAME + "!\"", 36, y); y += 20;
-      ctx.fillText("\"We're both so happy.\"", 36, y); y += 18;
+      y = fillWrappedText("\"Thank you again for finding " + DOG_NAME + "!\"", 36, y, TW, 18); y += 2;
+      y = fillWrappedText("\"We're both so happy.\"", 36, y, TW, 18);
     } else if (hasRescuedDog) {
-      ctx.fillText("\"Is that... " + DOG_NAME + "?! You found him!\"", 36, y); y += 22;
+      y = fillWrappedText("\"Is that... " + DOG_NAME + "?! You found him!\"", 36, y, TW, 18); y += 4;
       ctx.fillStyle = PAL.gold;
       ctx.fillText("Hand over the dog  [tap H]", 36, y); y += 18;
     } else if (dogQuestStarted) {
-      ctx.fillText("\"Please, if you see " + DOG_NAME + ",", 36, y); y += 18;
-      ctx.fillText("bring him back. He ran off toward", 36, y); y += 18;
-      ctx.fillText("one of the huts.\"", 36, y); y += 18;
+      y = fillWrappedText("\"Please, if you see " + DOG_NAME + ", bring him back. He ran off toward one of the huts.\"", 36, y, TW, 18);
     } else {
-      ctx.fillText("\"Have you seen my dog, " + DOG_NAME + "?", 36, y); y += 18;
-      ctx.fillText("He ran off toward one of the huts.", 36, y); y += 18;
-      ctx.fillText("Please, bring him home!\"", 36, y); y += 18;
+      y = fillWrappedText("\"Have you seen my dog, " + DOG_NAME + "? He ran off toward one of the huts. Please, bring him home!\"", 36, y, TW, 18);
     }
   } else if (townScreen === "moonKing") {
     ctx.fillStyle = PAL.white;
     if (!alienQuestComplete) {
-      ctx.fillText("\"Prove yourself against the aliens,", 36, y); y += 18;
-      ctx.fillText("traveler.\"", 36, y); y += 18;
+      y = fillWrappedText("\"Prove yourself against the aliens, traveler.\"", 36, y, TW, 18);
     } else if (futureManComplete) {
-      ctx.fillText("\"My old friend flies true again,", 36, y); y += 18;
-      ctx.fillText("thanks to you.\"", 36, y); y += 18;
+      y = fillWrappedText("\"My old friend flies true again, thanks to you.\"", 36, y, TW, 18);
     } else if (hasGearPart && hasArmPart && hasLegPart) {
-      ctx.fillText("\"You've found all his parts!\"", 36, y); y += 20;
+      y = fillWrappedText("\"You've found all his parts!\"", 36, y, TW, 18); y += 2;
       ctx.fillStyle = PAL.gold;
       ctx.fillText("Hand them over  [tap H]", 36, y); y += 18;
     } else {
-      ctx.fillText("\"Years ago I built a companion —", 36, y); y += 18;
-      ctx.fillText("a man of the future. I sent him to", 36, y); y += 18;
-      ctx.fillText("Earth, and never heard from him again.", 36, y); y += 18;
-      ctx.fillText("If you find any trace of him...\"", 36, y); y += 18;
+      y = fillWrappedText("\"Years ago I built a companion — a man of the future. I sent him to Earth, and never heard from him again. If you find any trace of him...\"", 36, y, TW, 18);
     }
   } else if (townScreen === "robotKing") {
     ctx.fillStyle = PAL.white;
     var zombieKillsUI = monsterKillCounts["Cyber Zombie"] || 0;
     if (!hasHeadphones) {
-      ctx.fillText("\"I am the one you rebuilt — a man", 36, y); y += 18;
-      ctx.fillText("of the future, sent to Earth long ago.\"", 36, y); y += 20;
-      ctx.fillText("\"Zombies overrun Cyber World. We cannot", 36, y); y += 18;
-      ctx.fillText("fight — but you are a great hero.\"", 36, y); y += 20;
-      ctx.fillText("\"Kill 10 zombies to prove your strength.\"", 36, y); y += 18;
+      y = fillWrappedText("\"I am the one you rebuilt — a man of the future, sent to Earth long ago.\"", 36, y, TW, 18); y += 2;
+      y = fillWrappedText("\"Zombies overrun Cyber World. We cannot fight — but you are a great hero.\"", 36, y, TW, 18); y += 2;
+      y = fillWrappedText("\"Kill 10 zombies to prove your strength.\"", 36, y, TW, 18);
       ctx.fillStyle = PAL.gold;
       ctx.fillText("Zombies slain: " + zombieKillsUI + "/10", 36, y); y += 18;
     } else if (!cyberWeaponsGiven) {
-      ctx.fillText("\"You've proven your strength. Take these", 36, y); y += 18;
-      ctx.fillText("headphones — they guard against the horde's", 36, y); y += 18;
-      ctx.fillText("screams. Find the tower for weapons, and", 36, y); y += 18;
-      ctx.fillText("defeat them to save our world.\"", 36, y); y += 18;
+      y = fillWrappedText("\"You've proven your strength. Take these headphones — they guard against the horde's screams. Find the tower for weapons, and defeat them to save our world.\"", 36, y, TW, 18);
     } else {
-      ctx.fillText("\"Stay sharp out there.\"", 36, y); y += 20;
+      y = fillWrappedText("\"Stay sharp out there.\"", 36, y, TW, 18); y += 2;
     }
     ctx.fillStyle = PAL.green;
-    ctx.fillText("Your party is fully healed and revived.", 36, y); y += 18;
+    y = fillWrappedText("Your party is fully healed and revived.", 36, y, TW, 18);
   }
 }
 
@@ -3208,10 +3226,10 @@ function renderCharacterSheetOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = p.alive ? PAL.white : PAL.red;
-  ctx.font = "bold 17px 'Courier New', monospace";
+  ctx.font = "bold 19px 'Courier New', monospace";
   ctx.fillText((p.clsEmoji ? p.clsEmoji + " " : "") + p.name + (p.alive ? "" : " (fallen)"), LW / 2, 90);
   ctx.textAlign = "left";
-  ctx.font = "13px 'Courier New', monospace";
+  ctx.font = "bold 15px 'Courier New', monospace";
 
   drawCloseX();
 
@@ -3226,17 +3244,19 @@ function renderCharacterSheetOverlay() {
   ctx.fillText("HP " + Math.max(0, p.hp) + "/" + p.maxHp + "   Mana " + p.mana, 36, y); y += 18;
   ctx.fillText("Food " + p.food, 36, y); y += 26;
 
+  var eqLabelMaxW = (LW - 42 - 60) - 36 - 8; // stop short of the [EQUIP]/[DRINK] button
+
   ctx.fillStyle = PAL.yellow;
   ctx.fillText("Equipment", 36, y); y += 18;
   var weaponRowY = y;
   ctx.fillStyle = PAL.white;
-  ctx.fillText("Weapon: " + (p.equippedWeapon ? p.equippedWeapon.name + " (+" + p.equippedWeapon.dmgBonus + " dmg)" : "None"), 36, y);
+  fillTextFitWidth("Weapon: " + (p.equippedWeapon ? p.equippedWeapon.name + " (+" + p.equippedWeapon.dmgBonus + " dmg)" : "None"), 36, y, eqLabelMaxW, 15);
   ctx.fillStyle = PAL.waterLight;
   ctx.fillText("[EQUIP]", LW - 42 - 60, y);
   y += 18;
   var armorRowY = y;
   ctx.fillStyle = PAL.white;
-  ctx.fillText("Armor: " + (p.equippedArmor ? p.equippedArmor.name + " (+" + p.armorBonus + " def)" : "None"), 36, y);
+  fillTextFitWidth("Armor: " + (p.equippedArmor ? p.equippedArmor.name + " (+" + p.armorBonus + " def)" : "None"), 36, y, eqLabelMaxW, 15);
   ctx.fillStyle = PAL.waterLight;
   ctx.fillText("[EQUIP]", LW - 42 - 60, y);
   y += 26;
@@ -3298,10 +3318,10 @@ function renderEquipPickerOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 15px 'Courier New', monospace";
+  ctx.font = "bold 17px 'Courier New', monospace";
   ctx.fillText("EQUIP " + cat.toUpperCase() + " — " + p.name, LW / 2, 165);
   ctx.textAlign = "left";
-  ctx.font = "13px 'Courier New', monospace";
+  ctx.font = "bold 15px 'Courier New', monospace";
 
   drawCloseX(equipCloseXRect());
 
@@ -3359,10 +3379,10 @@ function renderPotionPickerOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 15px 'Courier New', monospace";
+  ctx.font = "bold 17px 'Courier New', monospace";
   ctx.fillText("DRINK POTION — " + p.name, LW / 2, 165);
   ctx.textAlign = "left";
-  ctx.font = "13px 'Courier New', monospace";
+  ctx.font = "bold 15px 'Courier New', monospace";
 
   drawCloseX(equipCloseXRect());
 
@@ -4620,9 +4640,9 @@ function renderActionChoiceOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 16px 'Courier New', monospace";
   ctx.fillText("What do you want to do?", r.box.x + r.box.w / 2, r.box.y + 24);
-  ctx.font = "13px 'Courier New', monospace";
+  ctx.font = "bold 15px 'Courier New', monospace";
 
   actionChoices.forEach(function (c, i) {
     var row = r.rows[i];
@@ -4837,10 +4857,10 @@ function renderMenuOverlay() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 17px 'Courier New', monospace";
+  ctx.font = "bold 19px 'Courier New', monospace";
   ctx.fillText("MENU", LW / 2, 90);
   ctx.textAlign = "left";
-  ctx.font = "13px 'Courier New', monospace";
+  ctx.font = "bold 15px 'Courier New', monospace";
   drawCloseX();
 
   var y = 120;
@@ -4856,6 +4876,10 @@ function renderMenuOverlay() {
     ctx.fillText("[ LOAD ]", 140, y);
     y += 28;
   }
+
+  y += 8;
+  ctx.fillStyle = PAL.purple;
+  ctx.fillText("[ MUSIC PLAYER ]", 36, y);
 }
 
 function handleMenuTap(lx, ly) {
@@ -4872,6 +4896,14 @@ function handleMenuTap(lx, ly) {
       return;
     }
   }
+  y += 8;
+  if (ly >= y - 12 && ly < y + 6) { openMusicMenu(); return; }
+}
+
+function openMusicMenu() {
+  menuScreen = null;
+  document.getElementById("cogMenuOverlay").classList.add("show");
+  renderAll();
 }
 
 var confirmingRun = false;
@@ -5045,16 +5077,16 @@ function renderCyberDriveConfirmDialog() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 16px 'Courier New', monospace";
   ctx.fillText("Engage the cyber drive?", r.box.x + r.box.w / 2, r.box.y + 34);
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillStyle = PAL.gray;
-  ctx.fillText("A wild flight through space to Cyber World.", r.box.x + r.box.w / 2, r.box.y + 54);
+  fillWrappedTextCentered("A wild flight through space to Cyber World.", r.box.x + r.box.w / 2, r.box.y + 54, r.box.w - 30, 18);
 
   ctx.strokeStyle = PAL.green;
   ctx.strokeRect(r.yes.x, r.yes.y, r.yes.w, r.yes.h);
   ctx.fillStyle = PAL.green;
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 16px 'Courier New', monospace";
   ctx.fillText("YES", r.yes.x + r.yes.w / 2, r.yes.y + 21);
 
   ctx.strokeStyle = PAL.red;
@@ -5333,7 +5365,7 @@ function drawSpacePlanet(p) {
   ctx.beginPath(); ctx.arc(p.r * 0.35, p.r * 0.3, p.r * 0.14, 0, Math.PI * 2); ctx.fill();
   ctx.textAlign = "center";
   ctx.fillStyle = "#39ff88";
-  ctx.font = "bold 11px 'Courier New', monospace";
+  ctx.font = "bold 13px 'Courier New', monospace";
   ctx.fillText("CYBER PLANET", 0, -p.r - 10);
   ctx.textAlign = "left";
   ctx.restore();
@@ -5344,9 +5376,9 @@ function drawSpacePlanet(p) {
 function renderSpaceflightHud() {
   ctx.textAlign = "center";
   ctx.fillStyle = "#39ff88";
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 16px 'Courier New', monospace";
   ctx.fillText("ENGAGING CYBER DRIVE", LW / 2, 20);
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillStyle = "#aaaaaa";
   ctx.fillText("Meteorites: " + spaceMeteorsDestroyed + "/" + SPACE_METEOR_GOAL, LW / 2, 36);
   ctx.textAlign = "left";
@@ -5366,7 +5398,7 @@ function renderSpaceflightHud() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#66ccff";
-  ctx.font = "11px 'Courier New', monospace";
+  ctx.font = "bold 13px 'Courier New', monospace";
   ctx.fillText(Math.round(dist) + "m to Cyber Planet", LW / 2, 78);
   ctx.textAlign = "left";
 }
@@ -5682,16 +5714,16 @@ function renderHordeAudioConfirmDialog() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.white;
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 16px 'Courier New', monospace";
   ctx.fillText("Enable the audio?", r.box.x + r.box.w / 2, r.box.y + 34);
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillStyle = PAL.gray;
-  ctx.fillText("Your headphones guard against the horde's screams.", r.box.x + r.box.w / 2, r.box.y + 54);
+  fillWrappedTextCentered("Your headphones guard against the horde's screams.", r.box.x + r.box.w / 2, r.box.y + 54, r.box.w - 30, 18);
 
   ctx.strokeStyle = PAL.green;
   ctx.strokeRect(r.yes.x, r.yes.y, r.yes.w, r.yes.h);
   ctx.fillStyle = PAL.green;
-  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.font = "bold 16px 'Courier New', monospace";
   ctx.fillText("YES", r.yes.x + r.yes.w / 2, r.yes.y + 21);
 
   ctx.strokeStyle = PAL.red;
@@ -5790,9 +5822,6 @@ function onYouTubeIframeAPIReady() {
 }
 window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
 
-document.getElementById("cogBtn").addEventListener("click", function () {
-  document.getElementById("cogMenuOverlay").classList.add("show");
-});
 document.getElementById("closeCog").addEventListener("click", function () {
   document.getElementById("cogMenuOverlay").classList.remove("show");
 });
@@ -6006,7 +6035,7 @@ function renderHordeArena() {
       ctx.fillStyle = "rgba(255,0,0,0.5)";
       ctx.beginPath(); ctx.arc(sx, sy, 11, 0, Math.PI * 2); ctx.fill();
     }
-    ctx.font = "19px serif";
+    ctx.font = "21px serif";
     ctx.fillText(MONSTER_EMOJI["Cyber Zombie"], sx, sy);
   });
   ctx.restore();
@@ -6026,7 +6055,7 @@ function renderHordeArena() {
 
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.gold;
-  ctx.font = "12px 'Courier New', monospace";
+  ctx.font = "bold 14px 'Courier New', monospace";
   ctx.fillText("Wave " + hordeWave + "/" + HORDE_WAVE_COUNTS.length + " -- " + hordeZombies.length + " zombies left",
     MAP_INNER_X0 + MAP_INNER_W / 2, MAP_INNER_Y0 + 14);
   ctx.textAlign = "left";
@@ -6619,7 +6648,7 @@ function handleTownTap(lx, ly) {
     // once the dog's been rescued and the quest isn't already turned in —
     // see the matching render branch above for how this y is reached
     if (hasRescuedDog && !dogQuestComplete) {
-      var by = 115 + 22; // past the "Is that... found him!" line to the hand-over row
+      var by = 115 + 40; // past the (now word-wrapped, 2-line) "Is that... found him!" quote to the hand-over row
       if (ly >= by - 12 && ly < by + 6) { turnInDog(); return; }
     }
   } else if (townScreen === "moonKing") {
