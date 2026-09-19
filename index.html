@@ -5,6 +5,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>Ultima-Style RPG</title>
+<script src="https://www.youtube.com/iframe_api"></script>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
@@ -56,6 +57,48 @@
     font-size: 11px; padding: 8px; z-index: 999; display: none; white-space: pre-wrap;
     max-height: 40vh; overflow: auto;
   }
+  /* Music player — same mechanism as the reference zombie game: a gear
+     button opens a small panel for pasting a YouTube link, played on
+     loop through a hidden iframe player. */
+  #cogBtn {
+    position: fixed; top: 6px; right: 6px; z-index: 30;
+    background: rgba(0,0,0,0.85); border: 2px solid #8855ff; color: #8855ff;
+    border-radius: 50%; width: 30px; height: 30px; font-size: 15px;
+    cursor: pointer; touch-action: manipulation;
+    display: flex; align-items: center; justify-content: center; padding: 0;
+  }
+  #cogMenuOverlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.8); z-index: 80;
+    display: none; align-items: center; justify-content: center; padding: 16px;
+  }
+  #cogMenuOverlay.show { display: flex; }
+  #cogCard {
+    background: #0a0a0a; border: 2px solid #8855ff; border-radius: 8px;
+    padding: 18px 20px; max-width: 320px; width: 100%; position: relative;
+    color: #fff; font-family: 'Courier New', monospace;
+  }
+  #cogCard h2 { font-size: 13px; letter-spacing: 2px; color: #8855ff; margin-bottom: 14px; text-align: center; }
+  #closeCog {
+    position: absolute; top: 8px; right: 10px; background: transparent; border: none;
+    color: #ff5555; font-size: 18px; cursor: pointer; touch-action: manipulation;
+  }
+  #cogCard label { font-size: 10px; color: #8855ff; display: block; margin-bottom: 5px; letter-spacing: 1px; }
+  #ytInput {
+    width: 100%; background: #000; border: 1px solid #8855ff; border-radius: 4px;
+    color: #ccc; font-size: 11px; padding: 7px 8px; font-family: inherit; margin-bottom: 8px;
+  }
+  .cogRow { display: flex; gap: 8px; margin-bottom: 8px; }
+  .cogMusicBtn {
+    flex: 1; background: #000; border: 2px solid #39ff88; color: #39ff88;
+    font-size: 11px; letter-spacing: 1px; padding: 8px 4px; cursor: pointer;
+    font-family: inherit; font-weight: bold; touch-action: manipulation;
+  }
+  #musicStatus { font-size: 10px; color: #888; min-height: 14px; margin-bottom: 8px; }
+  .volRow { display: flex; align-items: center; gap: 10px; }
+  .volRow span { font-size: 10px; color: #8855ff; min-width: 55px; letter-spacing: 1px; }
+  #musicVol { flex: 1; }
+  #ytPlayerContainer { position: fixed; left: -220px; bottom: 0; width: 200px; height: 200px; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -87,6 +130,25 @@
 </div>
 
 <div id="errBox"></div>
+
+<button id="cogBtn" title="Music">&#9881;</button>
+
+<div id="cogMenuOverlay">
+  <div id="cogCard">
+    <button id="closeCog">&#10005;</button>
+    <h2>MUSIC PLAYER</h2>
+    <label>PASTE A YOUTUBE LINK</label>
+    <input id="ytInput" type="text" placeholder="https://youtube.com/watch?v=..." value="https://youtu.be/XMcbjp4Sq4M">
+    <div class="cogRow">
+      <button class="cogMusicBtn" id="ytPlay">PLAY</button>
+      <button class="cogMusicBtn" id="ytStop">STOP</button>
+    </div>
+    <div id="musicStatus">No music loaded</div>
+    <div class="volRow"><span>VOLUME</span><input type="range" id="musicVol" min="0" max="100" value="60"></div>
+  </div>
+</div>
+
+<div id="ytPlayerContainer"></div>
 
 <script>
 window.onerror = function (msg, src, line, col, err) {
@@ -5576,18 +5638,11 @@ function openCyberTower() {
 
 // ============================================================
 // TOWER BATTLE AUDIO — a "headphones" yes/no gate (same confirm-dialog
-// pattern as the cyber drive) before the horde fight, plus a small
-// synthesized battle-music loop for its duration (no audio files in a
-// single-file game, so it's built from oscillators, same spirit as the
-// reference zombie game's tone-based SFX).
+// pattern as the cyber drive) before the horde fight, backed by the
+// same YouTube-link music player as the reference zombie game (see the
+// cog button/menu and ytExtract/ytStartMusic below).
 // ============================================================
 var confirmingHordeAudio = false;
-var audioCtx = null;
-var hordeMusicPlaying = false;
-var hordeMusicTimer = null;
-var hordeMusicStep = 0;
-var HORDE_MUSIC_BASSLINE = [55, 55, 62, 55, 58, 55, 49, 55]; // low, tense loop (Hz)
-var HORDE_MUSIC_STEP_MS = 260;
 
 function renderHordeAudioConfirmDialog() {
   var r = runConfirmRects();
@@ -5638,50 +5693,109 @@ function confirmHordeAudioNo() {
 
 function confirmHordeAudioYes() {
   confirmingHordeAudio = false;
-  startHordeMusic();
+  ytStartMusic();
   enterZombieHorde();
 }
 
-function ensureAudioCtx() {
-  if (!audioCtx) {
-    var AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return null;
-    audioCtx = new AC();
+// ============================================================
+// YOUTUBE MUSIC PLAYER — same mechanism as the reference zombie game:
+// a hidden, looping YouTube iframe player, driven by a gear-icon menu
+// where any YouTube video/playlist link can be pasted in. Defaults to
+// that game's own track, so "enable the audio" plays the same music.
+// ============================================================
+var ytPlayer = null;
+var ytReady = false;
+var ytPendingPlay = false;
+var musicVolume = 0.6;
+var DEFAULT_YT = "https://youtu.be/XMcbjp4Sq4M";
+
+function ytExtract(url) {
+  try {
+    var pl = url.match(/[?&]list=([A-Za-z0-9_-]+)/);
+    if (pl) return { type: "playlist", id: pl[1] };
+    var v = url.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
+    if (v) return { type: "video", id: v[1] };
+  } catch (e) {}
+  return null;
+}
+
+function ytStartMusic() {
+  if (ytPlayer && ytPlayer.unMute) {
+    ytPlayer.unMute();
+    ytPlayer.setVolume(Math.round(musicVolume * 100));
+    ytPlayer.playVideo();
+    document.getElementById("musicStatus").textContent = "Playing";
+  } else {
+    ytPendingPlay = true;
   }
-  if (audioCtx.state === "suspended") audioCtx.resume();
-  return audioCtx;
 }
 
-function playHordeTone(freq, dur, type, vol) {
-  var ac = ensureAudioCtx();
-  if (!ac) return;
-  var osc = ac.createOscillator();
-  var gain = ac.createGain();
-  osc.type = type || "sawtooth";
-  osc.frequency.value = freq;
-  gain.gain.setValueAtTime(vol || 0.08, ac.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  osc.connect(gain); gain.connect(ac.destination);
-  osc.start();
-  osc.stop(ac.currentTime + dur);
+function ytStopMusic() {
+  if (ytPlayer && ytPlayer.pauseVideo) { ytPlayer.pauseVideo(); ytPlayer.mute(); }
+  document.getElementById("musicStatus").textContent = "Stopped";
 }
 
-function startHordeMusic() {
-  if (hordeMusicPlaying || !ensureAudioCtx()) return;
-  hordeMusicPlaying = true;
-  hordeMusicStep = 0;
-  hordeMusicTimer = setInterval(function () {
-    var note = HORDE_MUSIC_BASSLINE[hordeMusicStep % HORDE_MUSIC_BASSLINE.length];
-    playHordeTone(note, 0.22, "sawtooth", 0.09);
-    if (hordeMusicStep % 4 === 2) playHordeTone(note * 3, 0.15, "square", 0.03); // eerie high accent
-    hordeMusicStep++;
-  }, HORDE_MUSIC_STEP_MS);
+// Called by the YouTube iframe API script tag once it's loaded — must be
+// reachable as a real global, since Bramble's own code all lives inside
+// one big IIFE (see the window.onYouTubeIframeAPIReady bridge below).
+function onYouTubeIframeAPIReady() {
+  ytReady = true;
+  var input = document.getElementById("ytInput");
+  var url = (input && input.value.trim()) || DEFAULT_YT;
+  var info = ytExtract(url);
+  if (!info) return;
+  var pvars = { autoplay: 1, playsinline: 1, controls: 0, mute: 1, origin: window.location.origin };
+  var vidId;
+  if (info.type === "playlist") { pvars.listType = "playlist"; pvars.list = info.id; pvars.shuffle = 1; }
+  else { vidId = info.id; pvars.loop = 1; pvars.playlist = info.id; }
+  var cfg = {
+    height: "200", width: "200", playerVars: pvars,
+    events: {
+      onReady: function (e) {
+        e.target.setVolume(Math.round(musicVolume * 100));
+        if (ytPendingPlay) {
+          e.target.unMute(); e.target.playVideo();
+          ytPendingPlay = false;
+          document.getElementById("musicStatus").textContent = "Playing";
+        }
+      },
+      onStateChange: function (e) {
+        if (e.data === YT.PlayerState.ENDED || e.data === YT.PlayerState.UNSTARTED) e.target.playVideo();
+      }
+    }
+  };
+  if (vidId) cfg.videoId = vidId;
+  ytPlayer = new YT.Player("ytPlayerContainer", cfg);
 }
+window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
 
-function stopHordeMusic() {
-  hordeMusicPlaying = false;
-  if (hordeMusicTimer) { clearInterval(hordeMusicTimer); hordeMusicTimer = null; }
-}
+document.getElementById("cogBtn").addEventListener("click", function () {
+  document.getElementById("cogMenuOverlay").classList.add("show");
+});
+document.getElementById("closeCog").addEventListener("click", function () {
+  document.getElementById("cogMenuOverlay").classList.remove("show");
+});
+document.getElementById("cogMenuOverlay").addEventListener("click", function (e) {
+  if (e.target === this) this.classList.remove("show");
+});
+document.getElementById("ytPlay").addEventListener("click", function () {
+  var url = document.getElementById("ytInput").value.trim() || DEFAULT_YT;
+  if (ytPlayer && ytPlayer.unMute) {
+    var info = ytExtract(url);
+    if (!info) { document.getElementById("musicStatus").textContent = "Invalid URL"; return; }
+    if (info.type === "playlist") { ytPlayer.loadPlaylist({ list: info.id, listType: "playlist", index: 0 }); }
+    else { ytPlayer.loadVideoById(info.id); }
+    ytPlayer.unMute(); ytPlayer.setVolume(Math.round(musicVolume * 100)); ytPlayer.playVideo();
+    document.getElementById("musicStatus").textContent = "Playing";
+  } else {
+    ytPendingPlay = true;
+  }
+});
+document.getElementById("ytStop").addEventListener("click", ytStopMusic);
+document.getElementById("musicVol").addEventListener("input", function () {
+  musicVolume = this.value / 100;
+  if (ytPlayer && ytPlayer.setVolume) ytPlayer.setVolume(Math.round(musicVolume * 100));
+});
 
 // ============================================================
 // ZOMBIE HORDE — the tower fight plays out as a wave-survival lane
@@ -5826,7 +5940,7 @@ function hordeTick(now) {
 }
 
 function hordeVictory() {
-  stopHordeMusic();
+  ytStopMusic();
   pushLog("-----The horde is cleared!-----");
   pushLog("Your party holds the tower.");
   hordeZombies = []; hordeBullets = [];
@@ -5835,7 +5949,7 @@ function hordeVictory() {
 }
 
 function hordeDefeat() {
-  stopHordeMusic();
+  ytStopMusic();
   pushLog("-----The horde overwhelms your party-----");
   party[0].alive = true;
   party[0].hp = party[0].maxHp;
