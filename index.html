@@ -4744,7 +4744,10 @@ var awaitingShotDirection = false; // same idea, but for the Bow/Boomerang insid
 
 function cmdFire() {
   if (townScreen || confirmingRun) return;
-  if (state.mode === "spaceflight") { spaceFire(); return; }
+  // during the space-flight mini-game, firing is continuous/hold-based
+  // (see spaceSetHeld + the FIRE button's own pointerdown/up), not a
+  // one-shot click through here
+  if (state.mode === "spaceflight") return;
   if (!state.sailing || state.mode === "combat") { pushLog("No cannon to fire here."); renderAll(); return; }
   awaitingCannonDirection = true;
   pushLog("Fire! Choose a direction (arrow keys).");
@@ -4866,16 +4869,28 @@ var spaceship = null;      // { x, y, angle, vx, vy, thrustFlashUntil, hitFlashU
 var spaceAsteroids = [];
 var spaceBullets = [];
 var spaceStars = [];
-var spaceTimeLeft = 0;
+var spaceCam = { x: 0, y: 0 };
+var spacePlanet = null;         // { x, y, r } — the Cyber Planet, somewhere out in the world to find
+var spaceMeteorsDestroyed = 0;
+var SPACE_METEOR_GOAL = 20;
+var spaceReachedPlanet = false;
+var spaceElapsed = 0;
+var SPACEFLIGHT_MAX_MS = 90000; // safety net only — never a fail state, just stops an endlessly lost run
 var spaceRunning = false;
 var lastSpaceTick = 0;
 var spaceLastFire = 0;
-var SPACEFLIGHT_MS = 13000;
-var SHIP_TURN = 0.32;
-var SHIP_THRUST = 0.9;
-var SHIP_DRAG = 0.985;
-var SHIP_MAX_SPEED = 4.2;
-var SPACE_FIRE_COOLDOWN_MS = 220;
+var SPACE_WORLD_W = 1600, SPACE_WORLD_H = 2000; // bigger than the screen — you fly around in it to find the planet
+var SPACE_MIN_ASTEROIDS = 10;
+// Controls mirror the reference space-ranger game: turning/thrusting/firing
+// are all continuous while held (keyboard or the on-screen D-pad/FIRE
+// button), not one tap = one action.
+var spaceKeysHeld = { left: false, right: false, thrust: false, fire: false };
+var SHIP_TURN_RATE = 0.065;    // rad per 16.67ms frame, continuous while held
+var SHIP_THRUST_RATE = 0.22;   // speed added per 16.67ms frame, continuous while held
+var SHIP_DRAG = 0.987;
+var SHIP_MAX_SPEED = 6.5;
+var SPACE_FIRE_COOLDOWN_MS = 260;
+var SPACE_BULLET_SPEED = 9;
 
 function renderCyberDriveConfirmDialog() {
   var r = runConfirmRects();
@@ -4953,15 +4968,31 @@ function renderCyberFlash() {
 }
 
 function initSpaceflightState() {
-  spaceship = { x: LW / 2, y: LH - 60, angle: -Math.PI / 2, vx: 0, vy: 0, thrustFlashUntil: 0, hitFlashUntil: 0 };
+  spaceship = { x: SPACE_WORLD_W / 2, y: SPACE_WORLD_H - 150, angle: -Math.PI / 2, vx: 0, vy: 0, thrustFlashUntil: 0, hitFlashUntil: 0 };
+  spaceMeteorsDestroyed = 0;
+  spaceReachedPlanet = false;
+  spaceElapsed = 0;
+  spaceKeysHeld = { left: false, right: false, thrust: false, fire: false };
+
+  // the planet is placed far from the ship's start, somewhere in the
+  // world — you have to actually go find it, not just sit and wait
+  var margin = 140, px_, py_, tries = 0;
+  do {
+    px_ = margin + Math.random() * (SPACE_WORLD_W - margin * 2);
+    py_ = margin + Math.random() * (SPACE_WORLD_H - margin * 2);
+    tries++;
+  } while (Math.hypot(px_ - spaceship.x, py_ - spaceship.y) < 700 && tries < 50);
+  spacePlanet = { x: px_, y: py_, r: 55 };
+
   spaceAsteroids = [];
-  for (var i = 0; i < 7; i++) spaceAsteroids.push(makeSpaceAsteroid());
+  for (var i = 0; i < 14; i++) spaceAsteroids.push(makeSpaceAsteroid());
   spaceBullets = [];
-  spaceTimeLeft = SPACEFLIGHT_MS;
+
   spaceStars = [];
-  for (var s = 0; s < 40; s++) {
-    spaceStars.push({ x: Math.random() * LW, y: Math.random() * LH, r: Math.random() < 0.2 ? 2 : 1 });
+  for (var s = 0; s < 160; s++) {
+    spaceStars.push({ x: Math.random() * SPACE_WORLD_W, y: Math.random() * SPACE_WORLD_H, r: Math.random() < 0.15 ? 2 : 1 });
   }
+  spaceCam.x = spaceship.x; spaceCam.y = spaceship.y;
 }
 
 function makeSpaceAsteroid(size) {
@@ -4971,42 +5002,33 @@ function makeSpaceAsteroid(size) {
   for (var j = 0; j < 8; j++) jag.push(0.75 + Math.random() * 0.4);
   var ang = Math.random() * Math.PI * 2;
   var spd = 0.3 + Math.random() * 0.5;
+  var x, y, tries = 0;
+  do {
+    x = Math.random() * SPACE_WORLD_W;
+    y = Math.random() * SPACE_WORLD_H;
+    tries++;
+  } while (spaceship && Math.hypot(x - spaceship.x, y - spaceship.y) < 150 && tries < 20);
   return {
-    x: Math.random() * LW, y: Math.random() * (LH * 0.6),
+    x: x, y: y,
     vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
     r: r, size: size, jag: jag, spin: (Math.random() - 0.5) * 0.02, rot: 0
   };
 }
 
-function spaceTurnLeft() { if (state.mode === "spaceflight" && spaceship) spaceship.angle -= SHIP_TURN; }
-function spaceTurnRight() { if (state.mode === "spaceflight" && spaceship) spaceship.angle += SHIP_TURN; }
-
-function spaceThrust() {
-  if (state.mode !== "spaceflight" || !spaceship) return;
-  spaceship.vx += Math.cos(spaceship.angle) * SHIP_THRUST;
-  spaceship.vy += Math.sin(spaceship.angle) * SHIP_THRUST;
-  spaceship.thrustFlashUntil = performance.now() + 200;
-}
-
-function spaceFire() {
-  if (state.mode !== "spaceflight" || !spaceship) return;
-  var now = performance.now();
-  if (now - spaceLastFire < SPACE_FIRE_COOLDOWN_MS) return;
-  spaceLastFire = now;
-  spaceBullets.push({
-    x: spaceship.x + Math.cos(spaceship.angle) * 14,
-    y: spaceship.y + Math.sin(spaceship.angle) * 14,
-    vx: Math.cos(spaceship.angle) * 7 + spaceship.vx,
-    vy: Math.sin(spaceship.angle) * 7 + spaceship.vy,
-    startedAt: now
-  });
+// Continuous hold-based input, set by keydown/keyup and by
+// pointerdown/pointerup on the D-pad/FIRE button — read every physics
+// frame in spaceflightTick, same model as the reference game's own
+// keys/btn -> turnLeft/turnRight/thrustOn/fireOn scheme.
+function spaceSetHeld(key, val) {
+  if (state.mode !== "spaceflight") return;
+  spaceKeysHeld[key] = val;
 }
 
 function enterSpaceflight() {
   state.mode = "spaceflight";
   spaceRunning = true;
   lastSpaceTick = performance.now();
-  pushLog("You blast off into the void toward Cyber World!");
+  pushLog("You blast off into the void! Find the Cyber Planet and destroy 20 meteorites.");
   requestAnimationFrame(spaceflightTick);
 }
 
@@ -5014,24 +5036,42 @@ function spaceflightTick(now) {
   if (!spaceRunning) return;
   var dt = Math.min(now - lastSpaceTick, 50);
   lastSpaceTick = now;
-  spaceTimeLeft -= dt;
+  spaceElapsed += dt;
+
+  if (spaceKeysHeld.left) spaceship.angle -= SHIP_TURN_RATE * (dt / 16.67);
+  if (spaceKeysHeld.right) spaceship.angle += SHIP_TURN_RATE * (dt / 16.67);
+  if (spaceKeysHeld.thrust) {
+    spaceship.vx += Math.cos(spaceship.angle) * SHIP_THRUST_RATE * (dt / 16.67);
+    spaceship.vy += Math.sin(spaceship.angle) * SHIP_THRUST_RATE * (dt / 16.67);
+    spaceship.thrustFlashUntil = now + 150;
+  }
+  if (spaceKeysHeld.fire && now - spaceLastFire >= SPACE_FIRE_COOLDOWN_MS) {
+    spaceLastFire = now;
+    spaceBullets.push({
+      x: spaceship.x + Math.cos(spaceship.angle) * 14,
+      y: spaceship.y + Math.sin(spaceship.angle) * 14,
+      vx: Math.cos(spaceship.angle) * SPACE_BULLET_SPEED + spaceship.vx,
+      vy: Math.sin(spaceship.angle) * SPACE_BULLET_SPEED + spaceship.vy,
+      startedAt: now
+    });
+  }
 
   spaceship.vx *= SHIP_DRAG; spaceship.vy *= SHIP_DRAG;
   var sp = Math.sqrt(spaceship.vx * spaceship.vx + spaceship.vy * spaceship.vy);
   if (sp > SHIP_MAX_SPEED) { spaceship.vx = spaceship.vx / sp * SHIP_MAX_SPEED; spaceship.vy = spaceship.vy / sp * SHIP_MAX_SPEED; }
   spaceship.x += spaceship.vx * (dt / 16.67);
   spaceship.y += spaceship.vy * (dt / 16.67);
-  if (spaceship.x < 0) spaceship.x += LW; else if (spaceship.x > LW) spaceship.x -= LW;
-  if (spaceship.y < 0) spaceship.y += LH; else if (spaceship.y > LH) spaceship.y -= LH;
+  spaceship.x = Math.max(0, Math.min(SPACE_WORLD_W, spaceship.x));
+  spaceship.y = Math.max(0, Math.min(SPACE_WORLD_H, spaceship.y));
 
   spaceAsteroids.forEach(function (a) {
     a.x += a.vx * (dt / 16.67); a.y += a.vy * (dt / 16.67);
     a.rot += a.spin * dt;
-    if (a.x < -a.r) a.x = LW + a.r; else if (a.x > LW + a.r) a.x = -a.r;
-    if (a.y < -a.r) a.y = LH + a.r; else if (a.y > LH + a.r) a.y = -a.r;
+    if (a.x < -a.r) a.x = SPACE_WORLD_W + a.r; else if (a.x > SPACE_WORLD_W + a.r) a.x = -a.r;
+    if (a.y < -a.r) a.y = SPACE_WORLD_H + a.r; else if (a.y > SPACE_WORLD_H + a.r) a.y = -a.r;
   });
 
-  spaceBullets = spaceBullets.filter(function (b) { return now - b.startedAt < 900; });
+  spaceBullets = spaceBullets.filter(function (b) { return now - b.startedAt < 1100; });
   spaceBullets.forEach(function (b) {
     b.x += b.vx * (dt / 16.67); b.y += b.vy * (dt / 16.67);
   });
@@ -5044,6 +5084,10 @@ function spaceflightTick(now) {
       if (dx * dx + dy * dy < a2.r * a2.r) {
         spaceBullets.splice(bi, 1);
         breakSpaceAsteroid(ai);
+        spaceMeteorsDestroyed++;
+        if (spaceMeteorsDestroyed === SPACE_METEOR_GOAL) {
+          pushLog(spaceReachedPlanet ? "20 meteorites destroyed! Preparing to land..." : "20 meteorites destroyed! Now find the Cyber Planet!");
+        }
         break;
       }
     }
@@ -5064,11 +5108,22 @@ function spaceflightTick(now) {
     }
   });
 
-  while (spaceAsteroids.length < 5) spaceAsteroids.push(makeSpaceAsteroid());
+  while (spaceAsteroids.length < SPACE_MIN_ASTEROIDS) spaceAsteroids.push(makeSpaceAsteroid());
+
+  var distToPlanet = Math.hypot(spaceship.x - spacePlanet.x, spaceship.y - spacePlanet.y);
+  if (!spaceReachedPlanet && distToPlanet < spacePlanet.r + 12) {
+    spaceReachedPlanet = true;
+    pushLog(spaceMeteorsDestroyed >= SPACE_METEOR_GOAL
+      ? "You've found the Cyber Planet! Preparing to land..."
+      : "You've found the Cyber Planet! Clear more meteorites before you land.");
+  }
+
+  spaceCam.x = spaceship.x; spaceCam.y = spaceship.y;
 
   renderAll();
 
-  if (spaceTimeLeft <= 0) {
+  var missionDone = spaceReachedPlanet && spaceMeteorsDestroyed >= SPACE_METEOR_GOAL;
+  if (missionDone || spaceElapsed >= SPACEFLIGHT_MAX_MS) {
     spaceRunning = false;
     finishSpaceflight();
     return;
@@ -5097,11 +5152,25 @@ function finishSpaceflight() {
   renderAll();
 }
 
+// The camera follows the ship but is clamped to the world bounds, so the
+// view stops scrolling once you're near an edge instead of showing empty
+// space beyond it.
+function spaceCameraOffset() {
+  var camX = Math.max(LW / 2, Math.min(SPACE_WORLD_W - LW / 2, spaceCam.x));
+  var camY = Math.max(LH / 2, Math.min(SPACE_WORLD_H - LH / 2, spaceCam.y));
+  return { x: LW / 2 - camX, y: LH / 2 - camY };
+}
+
 function renderSpaceflightScreen() {
   px(0, 0, LW, LH, "#04040c");
+  var off = spaceCameraOffset();
+  ctx.save();
+  ctx.translate(off.x, off.y);
+
   ctx.fillStyle = "#ffffff";
   spaceStars.forEach(function (st) { ctx.fillRect(st.x, st.y, st.r, st.r); });
 
+  drawSpacePlanet(spacePlanet);
   spaceAsteroids.forEach(drawSpaceAsteroid);
 
   ctx.fillStyle = "#ffe066";
@@ -5109,14 +5178,60 @@ function renderSpaceflightScreen() {
 
   drawSpaceship(spaceship);
 
+  ctx.restore();
+
+  renderSpaceflightHud();
+}
+
+function drawSpacePlanet(p) {
+  if (!p) return;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.fillStyle = "#1a3d2c";
+  ctx.beginPath(); ctx.arc(0, 0, p.r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#39ff88";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "#39ff88";
+  ctx.beginPath(); ctx.arc(-p.r * 0.3, -p.r * 0.2, p.r * 0.22, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(p.r * 0.35, p.r * 0.3, p.r * 0.14, 0, Math.PI * 2); ctx.fill();
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#39ff88";
+  ctx.font = "bold 10px 'Courier New', monospace";
+  ctx.fillText("CYBER PLANET", 0, -p.r - 10);
+  ctx.textAlign = "left";
+  ctx.restore();
+}
+
+// HUD: meteorite progress plus a compass arrow (+ distance) pointing at
+// the Cyber Planet, since it starts out of view and has to be found.
+function renderSpaceflightHud() {
   ctx.textAlign = "center";
   ctx.fillStyle = "#39ff88";
   ctx.font = "bold 13px 'Courier New', monospace";
   ctx.fillText("ENGAGING CYBER DRIVE", LW / 2, 20);
   ctx.font = "11px 'Courier New', monospace";
   ctx.fillStyle = "#aaaaaa";
-  var secs = Math.max(0, Math.ceil((spaceTimeLeft || 0) / 1000));
-  ctx.fillText("Arriving in " + secs + "s -- dodge & shoot the asteroids!", LW / 2, 36);
+  ctx.fillText("Meteorites: " + spaceMeteorsDestroyed + "/" + SPACE_METEOR_GOAL, LW / 2, 36);
+  ctx.textAlign = "left";
+
+  var dx = spacePlanet.x - spaceship.x, dy = spacePlanet.y - spaceship.y;
+  var dist = Math.sqrt(dx * dx + dy * dy);
+  var ang = Math.atan2(dy, dx);
+  ctx.save();
+  ctx.translate(LW / 2, 54);
+  ctx.rotate(ang);
+  ctx.fillStyle = spaceReachedPlanet ? "#39ff88" : "#66ccff";
+  ctx.beginPath();
+  ctx.moveTo(13, 0); ctx.lineTo(-8, 8); ctx.lineTo(-8, -8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#66ccff";
+  ctx.font = "10px 'Courier New', monospace";
+  ctx.fillText(Math.round(dist) + "m to Cyber Planet", LW / 2, 78);
   ctx.textAlign = "left";
 }
 
@@ -5726,10 +5841,26 @@ function healerRevive(idx) {
 // ============================================================
 // INPUT
 // ============================================================
-document.getElementById("btnN").onclick = function () { if (state.mode === "spaceflight") spaceThrust(); else if (awaitingShotDirection) fireRangedWeapon("N"); else if (awaitingCannonDirection) fireCannon("N"); else if (state.mode === "combat") arenaMove(0, -1); else move(0, -1); };
-document.getElementById("btnS").onclick = function () { if (state.mode === "spaceflight") spaceThrust(); else if (awaitingShotDirection) fireRangedWeapon("S"); else if (awaitingCannonDirection) fireCannon("S"); else if (state.mode === "combat") arenaMove(0, 1); else move(0, 1); };
-document.getElementById("btnE").onclick = function () { if (state.mode === "spaceflight") spaceTurnRight(); else if (awaitingShotDirection) fireRangedWeapon("E"); else if (awaitingCannonDirection) fireCannon("E"); else if (state.mode === "combat") arenaMove(1, 0); else move(1, 0); };
-document.getElementById("btnW").onclick = function () { if (state.mode === "spaceflight") spaceTurnLeft(); else if (awaitingShotDirection) fireRangedWeapon("W"); else if (awaitingCannonDirection) fireCannon("W"); else if (state.mode === "combat") arenaMove(-1, 0); else move(-1, 0); };
+document.getElementById("btnN").onclick = function () { if (state.mode === "spaceflight") return; if (awaitingShotDirection) fireRangedWeapon("N"); else if (awaitingCannonDirection) fireCannon("N"); else if (state.mode === "combat") arenaMove(0, -1); else move(0, -1); };
+document.getElementById("btnS").onclick = function () { if (state.mode === "spaceflight") return; if (awaitingShotDirection) fireRangedWeapon("S"); else if (awaitingCannonDirection) fireCannon("S"); else if (state.mode === "combat") arenaMove(0, 1); else move(0, 1); };
+document.getElementById("btnE").onclick = function () { if (state.mode === "spaceflight") return; if (awaitingShotDirection) fireRangedWeapon("E"); else if (awaitingCannonDirection) fireCannon("E"); else if (state.mode === "combat") arenaMove(1, 0); else move(1, 0); };
+document.getElementById("btnW").onclick = function () { if (state.mode === "spaceflight") return; if (awaitingShotDirection) fireRangedWeapon("W"); else if (awaitingCannonDirection) fireCannon("W"); else if (state.mode === "combat") arenaMove(-1, 0); else move(-1, 0); };
+
+// Space-flight controls are hold-based (press and hold to turn/thrust/fire,
+// same as the reference space-ranger game), wired via pointerdown/up
+// instead of onclick so a continuous press is actually continuous.
+function bindSpaceHold(btnId, key) {
+  var el = document.getElementById(btnId);
+  el.addEventListener("pointerdown", function (e) { e.preventDefault(); spaceSetHeld(key, true); });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(function (evt) {
+    el.addEventListener(evt, function () { spaceSetHeld(key, false); });
+  });
+}
+bindSpaceHold("btnW", "left");
+bindSpaceHold("btnE", "right");
+bindSpaceHold("btnN", "thrust");
+bindSpaceHold("btnS", "thrust");
+bindSpaceHold("btnFire", "fire");
 document.getElementById("btnAttack").onclick = function () {
   if (state.mode === "combat") { combatPlayerAttack(); return; }
   if (townScreen || confirmingRun) return;
@@ -5754,10 +5885,10 @@ document.getElementById("btnShoot").onclick = cmdShoot;
 
 document.addEventListener("keydown", function (e) {
   if (state.mode === "spaceflight") {
-    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") spaceTurnLeft();
-    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") spaceTurnRight();
-    else if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") spaceThrust();
-    else if (e.key === " " || e.key === "f" || e.key === "F") spaceFire();
+    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") spaceSetHeld("left", true);
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") spaceSetHeld("right", true);
+    else if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") spaceSetHeld("thrust", true);
+    else if (e.key === " " || e.key === "f" || e.key === "F") spaceSetHeld("fire", true);
     return;
   }
   if (awaitingShotDirection) {
@@ -5783,6 +5914,14 @@ document.addEventListener("keydown", function (e) {
   else if (e.key === "m" || e.key === "M") cmdMenu();
   else if (e.key === "r" || e.key === "R") cmdRun();
   else if (e.key === "f" || e.key === "F") cmdFire();
+});
+
+document.addEventListener("keyup", function (e) {
+  if (state.mode !== "spaceflight") return;
+  if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") spaceSetHeld("left", false);
+  else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") spaceSetHeld("right", false);
+  else if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") spaceSetHeld("thrust", false);
+  else if (e.key === " " || e.key === "f" || e.key === "F") spaceSetHeld("fire", false);
 });
 
 // ============================================================
