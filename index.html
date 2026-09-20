@@ -69,18 +69,24 @@
   }
   #joystickThumb {
     position: absolute; width: 30px; height: 30px; border-radius: 50%;
-    background: rgba(170,170,255,0.85); border: 2px solid #fff;
+    background: rgba(0,200,255,0.9); border: 2px solid #fff;
     top: 30px; left: 30px; touch-action: none; pointer-events: none;
+    box-shadow: 0 0 10px rgba(0,212,255,0.8), 0 0 20px rgba(0,212,255,0.4);
+    transition: box-shadow 0.1s;
+  }
+  #joystickThumb.active {
+    box-shadow: 0 0 16px rgba(0,255,220,1), 0 0 32px rgba(0,212,255,0.6);
   }
   #spaceBtns { display: flex; align-items: center; gap: 12px; }
   #spaceThrustBtn, #spaceFireBtn {
-    border-radius: 50%; background: #000; cursor: pointer; touch-action: none;
+    border-radius: 50%; background: rgba(0,0,0,0.55); cursor: pointer; touch-action: none;
     font-family: inherit; font-weight: bold; display: flex; align-items: center; justify-content: center;
+    transition: background 0.08s, border-color 0.08s, box-shadow 0.08s;
   }
-  #spaceThrustBtn { width: 54px; height: 54px; border: 2px solid #ffcc33; color: #ffcc33; font-size: 20px; }
-  #spaceFireBtn { width: 68px; height: 68px; border: 2px solid #ff6666; color: #ff6666; font-size: 13px; }
-  #spaceThrustBtn.pressed { background: rgba(255,204,51,0.25); }
-  #spaceFireBtn.pressed { background: rgba(255,102,102,0.25); }
+  #spaceThrustBtn { width: 54px; height: 54px; border: 2px solid rgba(255,180,0,0.45); color: #ffcc33; font-size: 20px; }
+  #spaceFireBtn { width: 68px; height: 68px; border: 2px solid rgba(255,80,80,0.55); color: #ff6666; font-size: 13px; }
+  #spaceThrustBtn.pressed { background: rgba(255,180,0,0.18); border-color: rgba(255,210,0,0.9); box-shadow: 0 0 20px rgba(255,180,0,0.45); }
+  #spaceFireBtn.pressed { background: rgba(255,68,68,0.18); border-color: rgba(255,110,110,0.9); box-shadow: 0 0 22px rgba(255,68,68,0.5); }
   #errBox {
     position: fixed; bottom: 0; left: 0; right: 0; background: #400; color: #fdd;
     font-size: 11px; padding: 8px; z-index: 999; display: none; white-space: pre-wrap;
@@ -5114,6 +5120,7 @@ var CYBER_FLASH_MS = 900;
 var spaceship = null;      // { x, y, angle, vx, vy, thrustFlashUntil, hitFlashUntil }
 var spaceAsteroids = [];
 var spaceBullets = [];
+var spaceDebris = [];      // short-lived spark burst when an asteroid breaks apart
 var spaceStars = [];
 var spaceCam = { x: 0, y: 0 };
 var spacePlanet = null;         // { x, y, r } — the Cyber Planet, somewhere out in the world to find
@@ -5233,6 +5240,7 @@ function initSpaceflightState() {
   spaceAsteroids = [];
   for (var i = 0; i < 14; i++) spaceAsteroids.push(makeSpaceAsteroid());
   spaceBullets = [];
+  spaceDebris = [];
 
   spaceStars = [];
   for (var s = 0; s < 160; s++) {
@@ -5241,11 +5249,21 @@ function initSpaceflightState() {
   spaceCam.x = spaceship.x; spaceCam.y = spaceship.y;
 }
 
-function makeSpaceAsteroid(size) {
-  size = size || "large";
+// Shared shape factory so a fresh spawn and a split fragment (see
+// breakSpaceAsteroid) look and behave the same way, just placed and
+// launched differently.
+function makeSpaceAsteroidShape(x, y, size, vx, vy) {
   var r = size === "large" ? 26 : size === "medium" ? 16 : 9;
   var jag = [];
   for (var j = 0; j < 8; j++) jag.push(0.75 + Math.random() * 0.4);
+  return {
+    x: x, y: y, vx: vx, vy: vy,
+    r: r, size: size, jag: jag, spin: (Math.random() - 0.5) * 0.02, rot: 0
+  };
+}
+
+function makeSpaceAsteroid(size) {
+  size = size || "large";
   var ang = Math.random() * Math.PI * 2;
   var spd = 0.3 + Math.random() * 0.5;
   var x, y, tries = 0;
@@ -5254,11 +5272,7 @@ function makeSpaceAsteroid(size) {
     y = Math.random() * SPACE_WORLD_H;
     tries++;
   } while (spaceship && Math.hypot(x - spaceship.x, y - spaceship.y) < 150 && tries < 20);
-  return {
-    x: x, y: y,
-    vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
-    r: r, size: size, jag: jag, spin: (Math.random() - 0.5) * 0.02, rot: 0
-  };
+  return makeSpaceAsteroidShape(x, y, size, Math.cos(ang) * spd, Math.sin(ang) * spd);
 }
 
 // Continuous hold-based input, set by keydown/keyup and by
@@ -5316,6 +5330,12 @@ function spaceflightTick(now) {
     if (a.x < -a.r) a.x = SPACE_WORLD_W + a.r; else if (a.x > SPACE_WORLD_W + a.r) a.x = -a.r;
     if (a.y < -a.r) a.y = SPACE_WORLD_H + a.r; else if (a.y > SPACE_WORLD_H + a.r) a.y = -a.r;
   });
+
+  spaceDebris.forEach(function (d) {
+    d.x += d.vx * (dt / 16.67); d.y += d.vy * (dt / 16.67);
+    d.life -= d.decay * (dt / 16.67);
+  });
+  spaceDebris = spaceDebris.filter(function (d) { return d.life > 0; });
 
   spaceBullets = spaceBullets.filter(function (b) { return now - b.startedAt < 1100; });
   spaceBullets.forEach(function (b) {
@@ -5377,15 +5397,32 @@ function spaceflightTick(now) {
   requestAnimationFrame(spaceflightTick);
 }
 
+// Matches the reference asteroids game's splitAst: the pieces spawn right
+// at the point of impact and scatter outward, instead of two unrelated
+// asteroids just appearing somewhere else in the world.
 function breakSpaceAsteroid(idx) {
   var a = spaceAsteroids[idx];
   spaceAsteroids.splice(idx, 1);
-  if (a.size === "large") {
-    spaceAsteroids.push(makeSpaceAsteroid("medium"));
-    spaceAsteroids.push(makeSpaceAsteroid("medium"));
-  } else if (a.size === "medium") {
-    spaceAsteroids.push(makeSpaceAsteroid("small"));
-    spaceAsteroids.push(makeSpaceAsteroid("small"));
+  spawnSpaceDebris(a.x, a.y, a.size);
+  var childSize = a.size === "large" ? "medium" : a.size === "medium" ? "small" : null;
+  if (childSize) {
+    for (var i = 0; i < 2; i++) {
+      var ang = Math.random() * Math.PI * 2;
+      var spd = 0.9 + Math.random() * 0.9;
+      spaceAsteroids.push(makeSpaceAsteroidShape(a.x, a.y, childSize, Math.cos(ang) * spd, Math.sin(ang) * spd));
+    }
+  }
+}
+
+function spawnSpaceDebris(x, y, size) {
+  var n = size === "large" ? 10 : size === "medium" ? 7 : 4;
+  for (var i = 0; i < n; i++) {
+    var ang = Math.random() * Math.PI * 2;
+    var spd = 0.6 + Math.random() * 2.2;
+    spaceDebris.push({
+      x: x, y: y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
+      life: 1, decay: 0.03 + Math.random() * 0.03, r: 1 + Math.random() * 2
+    });
   }
 }
 
@@ -5418,6 +5455,13 @@ function renderSpaceflightScreen() {
 
   drawSpacePlanet(spacePlanet);
   spaceAsteroids.forEach(drawSpaceAsteroid);
+
+  ctx.fillStyle = "#ffcc88";
+  spaceDebris.forEach(function (d) {
+    ctx.globalAlpha = Math.max(0, d.life);
+    ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
 
   ctx.fillStyle = "#ffe066";
   spaceBullets.forEach(function (b) { ctx.fillRect(b.x - 1, b.y - 1, 3, 3); });
@@ -6713,10 +6757,14 @@ bindDirectionalHold("btnFire", "fire");
     activeId = null;
     spaceSetHeld("left", false); spaceSetHeld("right", false);
     thumb.style.left = "30px"; thumb.style.top = "30px";
+    thumb.classList.remove("active");
   }
   wrap.addEventListener("pointerdown", function (e) {
     e.preventDefault();
-    if (activeId === null) { activeId = e.pointerId; getCenter(); applyPoint(e.clientX, e.clientY); }
+    if (activeId === null) {
+      activeId = e.pointerId; getCenter(); applyPoint(e.clientX, e.clientY);
+      thumb.classList.add("active");
+    }
   });
   wrap.addEventListener("pointermove", function (e) {
     if (e.pointerId === activeId) { e.preventDefault(); applyPoint(e.clientX, e.clientY); }
