@@ -5937,14 +5937,31 @@ var hordeRunning = false;
 var hordeSquadX = 0;
 var hordeZombies = [];
 var hordeBullets = [];
+var hordeLasers = []; // transient laser-beam visuals: {x, untilTime}
 var hordeWave = 0;
-var HORDE_WAVE_COUNTS = [5, 8, 12];
+var HORDE_TOTAL_WAVES = 8;      // wave 8 is the final boss wave
 var hordeKeysHeld = { left: false, right: false };
 var HORDE_MOVE_SPEED = 3.2;     // px per 16.67ms frame, continuous while held
 var hordeFireTimer = 0;
-var HORDE_FIRE_INTERVAL = 260;  // ms between auto-fire volleys
-var HORDE_BULLET_SPEED = 7;
 var hordeLastTick = 0;
+
+// Weapon tiers unlock automatically as waves climb, same escalation as the
+// reference zombie game: rifle -> machine gun -> flamethrower -> laser.
+var HORDE_WEAPON_TIERS = [
+  { minWave: 1, key: "rifle",        name: "Rifle",         color: "#ffe066", dmg: 8,  fireInterval: 260, speed: 7 },
+  { minWave: 3, key: "machinegun",   name: "Machine Gun",   color: "#ff44bb", dmg: 10, fireInterval: 130, speed: 8 },
+  { minWave: 5, key: "flamethrower", name: "Flamethrower",  color: "#ff6600", dmg: 6,  fireInterval: 90,  speed: 4, range: 140 },
+  { minWave: 7, key: "laser",        name: "Laser",         color: "#00ffff", dmg: 22, fireInterval: 220, laser: true }
+];
+var hordeWeapon = HORDE_WEAPON_TIERS[0];
+
+function hordeWeaponForWave(wave) {
+  var chosen = HORDE_WEAPON_TIERS[0];
+  for (var i = 0; i < HORDE_WEAPON_TIERS.length; i++) {
+    if (wave >= HORDE_WEAPON_TIERS[i].minWave) chosen = HORDE_WEAPON_TIERS[i];
+  }
+  return chosen;
+}
 
 function hordeSetHeld(key, val) {
   if (state.mode !== "zombieHorde") return;
@@ -5956,7 +5973,9 @@ function enterZombieHorde() {
   hordeSquadX = MAP_INNER_W / 2;
   hordeZombies = [];
   hordeBullets = [];
+  hordeLasers = [];
   hordeWave = 0;
+  hordeWeapon = HORDE_WEAPON_TIERS[0];
   hordeKeysHeld = { left: false, right: false };
   hordeFireTimer = 0;
   hordeLastTick = performance.now();
@@ -5969,19 +5988,39 @@ function enterZombieHorde() {
 
 function startHordeWave() {
   hordeWave++;
-  var count = HORDE_WAVE_COUNTS[Math.min(hordeWave - 1, HORDE_WAVE_COUNTS.length - 1)];
-  for (var i = 0; i < count; i++) hordeZombies.push(makeHordeZombie());
-  pushLog("Wave " + hordeWave + ": " + count + " zombies incoming!");
+  var newWeapon = hordeWeaponForWave(hordeWave);
+  if (newWeapon.key !== hordeWeapon.key) {
+    pushLog("You grab a " + newWeapon.name + " from the tower armory!");
+  }
+  hordeWeapon = newWeapon;
+
+  if (hordeWave >= HORDE_TOTAL_WAVES) {
+    hordeZombies.push(makeHordeZombie(true));
+    for (var b = 0; b < 3; b++) hordeZombies.push(makeHordeZombie(false));
+    pushLog("-----A ZOMBIE BOSS ENTERS!-----");
+  } else {
+    var count = 4 + hordeWave * 2;
+    for (var i = 0; i < count; i++) hordeZombies.push(makeHordeZombie(false));
+    pushLog("Wave " + hordeWave + ": " + count + " zombies incoming!");
+  }
 }
 
-function makeHordeZombie() {
-  var hp = 14 + Math.floor(Math.random() * 8) + (hordeWave - 1) * 4;
+function makeHordeZombie(isBoss) {
+  if (isBoss) {
+    var bossHp = 260;
+    return {
+      x: MAP_INNER_W / 2, y: -30, hp: bossHp, maxHp: bossHp,
+      speed: 0.3, swerve: 0.02, swerveT: Math.random() * Math.PI * 2,
+      hitFlashUntil: 0, boss: true
+    };
+  }
+  var hp = 12 + Math.floor(Math.random() * 6) + (hordeWave - 1) * 3;
   return {
     x: 20 + Math.random() * (MAP_INNER_W - 40), y: -20,
     hp: hp, maxHp: hp,
-    speed: 0.5 + Math.random() * 0.3 + (hordeWave - 1) * 0.08,
+    speed: 0.5 + Math.random() * 0.3 + (hordeWave - 1) * 0.06,
     swerve: (Math.random() - 0.5) * 0.03, swerveT: Math.random() * Math.PI * 2,
-    hitFlashUntil: 0
+    hitFlashUntil: 0, boss: false
   };
 }
 
@@ -6010,15 +6049,28 @@ function hordeTick(now) {
 
   hordeFireTimer -= dt;
   if (hordeFireTimer <= 0) {
-    hordeFireTimer = HORDE_FIRE_INTERVAL;
+    hordeFireTimer = hordeWeapon.fireInterval;
     var aliveCount = Math.max(1, party.filter(function (p) { return p.alive; }).length);
     for (var i = 0; i < aliveCount; i++) {
-      hordeBullets.push({ x: hordeSquadX + (i - (aliveCount - 1) / 2) * 14, y: MAP_INNER_H - 40 });
+      var bx = hordeSquadX + (i - (aliveCount - 1) / 2) * 14;
+      if (hordeWeapon.laser) {
+        hordeFireLaser(bx, now);
+      } else {
+        var by = MAP_INNER_H - 40;
+        hordeBullets.push({
+          x: bx, y: by, startY: by,
+          dmg: hordeWeapon.dmg, speed: hordeWeapon.speed, range: hordeWeapon.range,
+          weaponKey: hordeWeapon.key
+        });
+      }
     }
   }
+  hordeLasers = hordeLasers.filter(function (l) { return now < l.untilTime; });
 
-  hordeBullets = hordeBullets.filter(function (b) { return b.y > -10; });
-  hordeBullets.forEach(function (b) { b.y -= HORDE_BULLET_SPEED * (dt / 16.67); });
+  hordeBullets = hordeBullets.filter(function (b) {
+    return b.y > -10 && (!b.range || (b.startY - b.y) < b.range);
+  });
+  hordeBullets.forEach(function (b) { b.y -= b.speed * (dt / 16.67); });
 
   hordeZombies.forEach(function (z) {
     z.swerveT += dt * 0.003;
@@ -6031,7 +6083,7 @@ function hordeTick(now) {
     for (var zi = 0; zi < hordeZombies.length; zi++) {
       var z = hordeZombies[zi];
       if (Math.abs(b.x - z.x) < 12 && Math.abs(b.y - z.y) < 14) {
-        z.hp -= 8;
+        z.hp -= b.dmg;
         z.hitFlashUntil = now + 120;
         hordeBullets.splice(bi, 1);
         if (z.hp <= 0) hordeZombies.splice(zi, 1);
@@ -6042,8 +6094,13 @@ function hordeTick(now) {
 
   var baselineY = MAP_INNER_H - 46;
   for (var zi2 = hordeZombies.length - 1; zi2 >= 0; zi2--) {
-    if (hordeZombies[zi2].y >= baselineY) {
-      hordeZombies.splice(zi2, 1);
+    var reached = hordeZombies[zi2];
+    if (reached.y >= baselineY) {
+      if (reached.boss) {
+        reached.y = -30; reached.x = MAP_INNER_W / 2;
+      } else {
+        hordeZombies.splice(zi2, 1);
+      }
       hordeDamagePartyMember();
     }
   }
@@ -6055,7 +6112,7 @@ function hordeTick(now) {
   }
 
   if (hordeZombies.length === 0) {
-    if (hordeWave >= HORDE_WAVE_COUNTS.length) {
+    if (hordeWave >= HORDE_TOTAL_WAVES) {
       hordeRunning = false;
       hordeVictory();
       return;
@@ -6067,11 +6124,27 @@ function hordeTick(now) {
   requestAnimationFrame(hordeTick);
 }
 
+// Laser tier fires instant beams instead of travelling projectiles: each
+// soldier's column is checked for the nearest zombie and it's hit right
+// away, matching the reference game's continuous-beam laser.
+function hordeFireLaser(bx, now) {
+  var best = null, bestY = -Infinity;
+  hordeZombies.forEach(function (z) {
+    if (Math.abs(z.x - bx) < 12 && z.y > bestY) { best = z; bestY = z.y; }
+  });
+  if (best) {
+    best.hp -= hordeWeapon.dmg;
+    best.hitFlashUntil = now + 120;
+    if (best.hp <= 0) hordeZombies.splice(hordeZombies.indexOf(best), 1);
+  }
+  hordeLasers.push({ x: bx, untilTime: now + 90 });
+}
+
 function hordeVictory() {
   ytStopMusic();
-  pushLog("-----The horde is cleared!-----");
+  pushLog("-----The zombie boss falls! The horde is cleared!-----");
   pushLog("Your party holds the tower.");
-  hordeZombies = []; hordeBullets = [];
+  hordeZombies = []; hordeBullets = []; hordeLasers = [];
   state.mode = "cyber";
   renderAll();
 }
@@ -6082,7 +6155,7 @@ function hordeDefeat() {
   party[0].alive = true;
   party[0].hp = party[0].maxHp;
   sharedGold = Math.floor(sharedGold * 0.5);
-  hordeZombies = []; hordeBullets = [];
+  hordeZombies = []; hordeBullets = []; hordeLasers = [];
   respawnAfterDefeat();
   pushLog("You wake at the hospital. Half your gold is gone.");
   if (party.some(function (p, i) { return i > 0 && !p.alive; })) {
@@ -6100,28 +6173,101 @@ function renderHordeScreen() {
   renderLogArea();
 }
 
+// Zombie look ported from the reference zombie game's drawZombie(): a
+// blocky green body, oval head, glowing eyes and a stitched mouth, with a
+// gold crown marking the boss variant.
+function drawHordeZombie(sx, sy, z, now) {
+  var scale = z.boss ? 1.9 : 1;
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.scale(scale, scale);
+  if (now < z.hitFlashUntil) { ctx.shadowColor = "#ff4444"; ctx.shadowBlur = 10; }
+  var bodyColor = z.boss ? "#8B0000" : "#2d5a27";
+  var headColor = z.boss ? "#b22222" : "#5a9952";
+
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.beginPath(); ctx.ellipse(0, 12, 7, 3, 0, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = bodyColor;
+  ctx.fillRect(-5, 0, 10, 11);
+
+  ctx.fillStyle = headColor;
+  ctx.beginPath(); ctx.ellipse(0, -5, 6, 6.5, 0, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = "#ff0";
+  ctx.beginPath(); ctx.ellipse(-2.2, -6, 1.6, 1.6, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(2.2, -6, 1.6, 1.6, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#f00";
+  ctx.beginPath(); ctx.ellipse(-2.2, -6, 0.8, 0.8, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(2.2, -6, 0.8, 0.8, 0, 0, Math.PI * 2); ctx.fill();
+
+  ctx.strokeStyle = "#000"; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.arc(0, -2, 2.6, 0.2, Math.PI - 0.2); ctx.stroke();
+
+  ctx.fillStyle = headColor;
+  ctx.fillRect(-8.5, 1, 3.5, 3);
+  ctx.fillRect(5, 1, 3.5, 3);
+
+  ctx.fillStyle = bodyColor;
+  ctx.fillRect(-4, 10, 3, 4.5);
+  ctx.fillRect(1, 10, 3, 4.5);
+
+  if (z.boss) {
+    ctx.fillStyle = "#ffd700";
+    ctx.beginPath();
+    ctx.moveTo(-5, -9); ctx.lineTo(-5, -12.5); ctx.lineTo(-2.5, -10);
+    ctx.lineTo(0, -13.5); ctx.lineTo(2.5, -10); ctx.lineTo(5, -12.5); ctx.lineTo(5, -9);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+
+  if (z.maxHp > 1) {
+    var bw = z.boss ? 40 : 16, bh = 3;
+    var bx0 = sx - bw / 2, by0 = sy - (z.boss ? 34 : 16);
+    px(bx0, by0, bw, bh, "#333");
+    var pct = Math.max(0, z.hp / z.maxHp);
+    px(bx0, by0, bw * pct, bh, pct > 0.5 ? "#44ff44" : pct > 0.25 ? "#ffaa00" : "#ff2222");
+  }
+}
+
+function drawHordeBullet(sx, sy, b) {
+  if (b.weaponKey === "flamethrower") {
+    ctx.fillStyle = "#ff6600";
+    ctx.beginPath(); ctx.arc(sx, sy, 3, 0, Math.PI * 2); ctx.fill();
+  } else if (b.weaponKey === "machinegun") {
+    px(sx - 2, sy - 5, 4, 10, "#ff88dd");
+  } else {
+    px(sx - 1, sy - 4, 2, 8, "#ffe066");
+  }
+}
+
 function renderHordeArena() {
   px(MAP_INNER_X0, MAP_INNER_Y0, MAP_INNER_W, MAP_INNER_H, "#0a0a0a");
 
-  var now = performance.now();
+  // Clip sprites to the arena box — the boss's larger scale would otherwise
+  // spill up into the party-status bar while it's spawning at the top.
   ctx.save();
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  hordeZombies.forEach(function (z) {
-    var sx = MAP_INNER_X0 + z.x, sy = MAP_INNER_Y0 + z.y;
-    if (now < z.hitFlashUntil) {
-      ctx.fillStyle = "rgba(255,0,0,0.5)";
-      ctx.beginPath(); ctx.arc(sx, sy, 11, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.font = "21px serif";
-    ctx.fillText(MONSTER_EMOJI["Cyber Zombie"], sx, sy);
-  });
-  ctx.restore();
+  ctx.beginPath();
+  ctx.rect(MAP_INNER_X0, MAP_INNER_Y0, MAP_INNER_W, MAP_INNER_H);
+  ctx.clip();
 
-  ctx.fillStyle = "#ffe066";
-  hordeBullets.forEach(function (b) {
-    px(MAP_INNER_X0 + b.x - 1, MAP_INNER_Y0 + b.y - 4, 2, 8, "#ffe066");
+  var now = performance.now();
+  hordeZombies.forEach(function (z) {
+    drawHordeZombie(MAP_INNER_X0 + z.x, MAP_INNER_Y0 + z.y, z, now);
   });
+
+  var baselineY = MAP_INNER_Y0 + MAP_INNER_H - 40;
+  ctx.strokeStyle = "#44aaff"; ctx.lineWidth = 2;
+  hordeLasers.forEach(function (l) {
+    var sx = MAP_INNER_X0 + l.x;
+    ctx.beginPath(); ctx.moveTo(sx, baselineY); ctx.lineTo(sx, MAP_INNER_Y0); ctx.stroke();
+  });
+
+  hordeBullets.forEach(function (b) {
+    drawHordeBullet(MAP_INNER_X0 + b.x, MAP_INNER_Y0 + b.y, b);
+  });
+
+  ctx.restore();
 
   var aliveParty = party.filter(function (p) { return p.alive; });
   var baseY = MAP_INNER_H - 30;
@@ -6131,11 +6277,17 @@ function renderHordeArena() {
     drawHuman(sx, sy, TILE * 0.9, p.color, "N");
   });
 
+  var boss = hordeZombies.filter(function (z) { return z.boss; })[0];
   ctx.textAlign = "center";
   ctx.fillStyle = PAL.gold;
   ctx.font = "bold 14px 'Courier New', monospace";
-  ctx.fillText("Wave " + hordeWave + "/" + HORDE_WAVE_COUNTS.length + " -- " + hordeZombies.length + " zombies left",
+  ctx.fillText(
+    (boss ? "ZOMBIE BOSS -- " : "Wave " + hordeWave + "/" + HORDE_TOTAL_WAVES + " -- ") +
+      hordeZombies.length + " zombies left",
     MAP_INNER_X0 + MAP_INNER_W / 2, MAP_INNER_Y0 + 14);
+  ctx.fillStyle = hordeWeapon.color;
+  ctx.font = "bold 11px 'Courier New', monospace";
+  ctx.fillText(hordeWeapon.name.toUpperCase(), MAP_INNER_X0 + MAP_INNER_W / 2, MAP_INNER_Y0 + 28);
   ctx.textAlign = "left";
 }
 function openVaultChest(x, y) {
