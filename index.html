@@ -52,10 +52,12 @@
     font-family: inherit; font-weight: bold; min-width: 64px;
   }
   .cmdBtn:active { background: #331111; }
-  /* Space-flight controls — same scheme as the reference space-ranger
-     game: a drag joystick (turn only) plus dedicated thrust/fire
-     buttons, replacing the D-pad and RPG command buttons while flying,
-     since those don't apply there. */
+  /* Space-flight controls — the Blasteroids scheme: a drag joystick (turn
+     only) plus dedicated thrust/fire buttons, replacing the D-pad and RPG
+     command buttons while flying, since those don't apply there. Like the
+     reference Blasteroids game, the joystick has no visible base ring —
+     just the floating glowing thumb — unlike the bordered-circle joystick
+     used elsewhere (e.g. the reference space-ranger game). */
   #spaceControls {
     display: none; align-items: center; justify-content: space-between;
     width: 100%; touch-action: none;
@@ -63,10 +65,7 @@
   #joystickWrap {
     position: relative; width: 90px; height: 90px; flex-shrink: 0; touch-action: none;
   }
-  #joystickBase {
-    position: absolute; inset: 0; border-radius: 50%;
-    border: 2px solid rgba(170,170,255,0.4); background: rgba(170,170,255,0.08);
-  }
+  #joystickBase { display: none; }
   #joystickThumb {
     position: absolute; width: 30px; height: 30px; border-radius: 50%;
     background: rgba(0,200,255,0.9); border: 2px solid #fff;
