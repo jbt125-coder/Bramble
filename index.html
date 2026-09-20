@@ -52,6 +52,35 @@
     font-family: inherit; font-weight: bold; min-width: 64px;
   }
   .cmdBtn:active { background: #331111; }
+  /* Space-flight controls — same scheme as the reference space-ranger
+     game: a drag joystick (turn only) plus dedicated thrust/fire
+     buttons, replacing the D-pad and RPG command buttons while flying,
+     since those don't apply there. */
+  #spaceControls {
+    display: none; align-items: center; justify-content: space-between;
+    width: 100%; touch-action: none;
+  }
+  #joystickWrap {
+    position: relative; width: 90px; height: 90px; flex-shrink: 0; touch-action: none;
+  }
+  #joystickBase {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 2px solid rgba(170,170,255,0.4); background: rgba(170,170,255,0.08);
+  }
+  #joystickThumb {
+    position: absolute; width: 30px; height: 30px; border-radius: 50%;
+    background: rgba(170,170,255,0.85); border: 2px solid #fff;
+    top: 30px; left: 30px; touch-action: none; pointer-events: none;
+  }
+  #spaceBtns { display: flex; align-items: center; gap: 12px; }
+  #spaceThrustBtn, #spaceFireBtn {
+    border-radius: 50%; background: #000; cursor: pointer; touch-action: none;
+    font-family: inherit; font-weight: bold; display: flex; align-items: center; justify-content: center;
+  }
+  #spaceThrustBtn { width: 54px; height: 54px; border: 2px solid #ffcc33; color: #ffcc33; font-size: 20px; }
+  #spaceFireBtn { width: 68px; height: 68px; border: 2px solid #ff6666; color: #ff6666; font-size: 13px; }
+  #spaceThrustBtn.pressed { background: rgba(255,204,51,0.25); }
+  #spaceFireBtn.pressed { background: rgba(255,102,102,0.25); }
   #errBox {
     position: fixed; bottom: 0; left: 0; right: 0; background: #400; color: #fdd;
     font-size: 11px; padding: 8px; z-index: 999; display: none; white-space: pre-wrap;
@@ -119,6 +148,16 @@
       <button class="cmdBtn" id="btnDismount" style="display:none;">DISMOUNT</button>
       <button class="cmdBtn" id="btnTame" style="display:none;">TAME</button>
       <button class="cmdBtn" id="btnShoot" style="display:none;">SHOOT</button>
+    </div>
+    <div id="spaceControls">
+      <div id="joystickWrap">
+        <div id="joystickBase"></div>
+        <div id="joystickThumb"></div>
+      </div>
+      <div id="spaceBtns">
+        <button id="spaceThrustBtn">&#9650;</button>
+        <button id="spaceFireBtn">FIRE</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2898,9 +2937,10 @@ function renderAll() {
   if (actionChoices) renderActionChoiceOverlay();
 
   // FIRE button only makes sense while actually sailing, out on the map
-  // (not in combat, not in a town popup)
+  // (not in combat, not in a town popup) — space-flight has its own
+  // dedicated FIRE button as part of #spaceControls instead
   var fireBtn = document.getElementById("btnFire");
-  fireBtn.style.display = ((state.sailing && state.mode !== "combat") || state.mode === "spaceflight") ? "inline-block" : "none";
+  fireBtn.style.display = (state.sailing && state.mode !== "combat") ? "inline-block" : "none";
 
   // DISMOUNT shows whenever mounted, out on the map
   var dismountBtn = document.getElementById("btnDismount");
@@ -2915,6 +2955,15 @@ function renderAll() {
   var shootBtn = document.getElementById("btnShoot");
   var leaderWeapon = party[0] && party[0].equippedWeapon;
   shootBtn.style.display = (state.mode === "combat" && leaderWeapon && leaderWeapon.ranged) ? "inline-block" : "none";
+
+  // While flying, swap the whole D-pad/RPG command row for the
+  // joystick+thrust+fire controls (matching the reference space-ranger
+  // game) — none of ATTACK/CAST/ACTION/MENU/RUN/the arrow D-pad apply
+  // to a space-flight scene, so showing them was just confusing clutter.
+  var flying = state.mode === "spaceflight";
+  document.getElementById("dpadWrap").style.display = flying ? "none" : "grid";
+  document.getElementById("cmdBtns").style.display = flying ? "none" : "grid";
+  document.getElementById("spaceControls").style.display = flying ? "flex" : "none";
 }
 
 // ============================================================
@@ -3089,7 +3138,7 @@ function renderTownScreenOverlay() {
       y = fillWrappedText("\"Slay him, bring his wand, and 500 gold is yours.\"", 36, y, TW, 18); y += 4;
       if (hasWizardsWand) {
         ctx.fillStyle = PAL.gold;
-        ctx.fillText("You have the wand!  [tap T]", 36, y); y += 18;
+        ctx.fillText("Tap to hand over the wand", 36, y); y += 18;
       } else {
         ctx.fillStyle = PAL.gray;
         ctx.fillText("(Dungeon level 8, mainland)", 36, y); y += 18;
@@ -3110,8 +3159,10 @@ function renderTownScreenOverlay() {
   } else if (townScreen === "moonshop") {
     ctx.fillStyle = PAL.gold;
     ctx.fillText("Gold: " + sharedGold, 36, y); y += 22;
+    ctx.fillStyle = PAL.gray;
+    ctx.fillText("Tap to buy", 36, y); y += 18;
     ctx.fillStyle = PAL.white;
-    fillTextFitWidth(MOON_ARMOR.name + " (+" + MOON_ARMOR.defBonus + " def) - 200g  [tap M]", 36, y, TW, 15); y += 18;
+    fillTextFitWidth(MOON_ARMOR.name + " (+" + MOON_ARMOR.defBonus + " def) - 200g", 36, y, TW, 15); y += 18;
   } else if (townScreen === "tavern") {
     if (tavernRecruit) {
       ctx.fillStyle = PAL.white;
@@ -3133,20 +3184,22 @@ function renderTownScreenOverlay() {
     ctx.fillStyle = PAL.waterLight;
     ctx.fillText("The water is free to all.", 36, y); y += 22;
     ctx.fillStyle = PAL.white;
-    ctx.fillText("Drink & restore party HP  [tap H]", 36, y); y += 18;
+    ctx.fillText("Tap to drink & restore party HP", 36, y); y += 18;
   } else if (townScreen === "healer" || townScreen === "church") {
     ctx.fillStyle = PAL.white;
     ctx.fillText("\"Coin buys back a soul.\"", 36, y); y += 22;
-    var anyDead = false;
-    party.forEach(function (p, i) {
-      if (!p.alive) {
-        anyDead = true;
-        ctx.fillStyle = PAL.red;
-        ctx.fillText("Revive " + p.name + " (" + p.reviveCost + "g)  [tap V" + (i + 1) + "]", 36, y);
-        y += 18;
-      }
-    });
-    if (!anyDead) {
+    var anyDead = party.some(function (p) { return !p.alive; });
+    if (anyDead) {
+      ctx.fillStyle = PAL.gray;
+      ctx.fillText("Tap a name to revive", 36, y); y += 18;
+      party.forEach(function (p) {
+        if (!p.alive) {
+          ctx.fillStyle = PAL.red;
+          ctx.fillText("Revive " + p.name + " (" + p.reviveCost + "g)", 36, y);
+          y += 18;
+        }
+      });
+    } else {
       ctx.fillStyle = PAL.gray;
       ctx.fillText("No one here needs reviving.", 36, y); y += 18;
     }
@@ -3155,28 +3208,31 @@ function renderTownScreenOverlay() {
     if (state.inGearHut && hasTeddyBear && !hasGearPart) {
       ctx.fillText("Give back the teddy bear:", 36, y); y += 20;
       ctx.fillStyle = PAL.gold;
-      ctx.fillText("Teddy Bear 🧸  [tap T]", 36, y); y += 18;
+      ctx.fillText("Teddy Bear 🧸", 36, y); y += 18;
     } else if (state.inArmHut && hasTreeHeart && !hasArmPart) {
       ctx.fillText("Give back the tree's heart:", 36, y); y += 20;
       ctx.fillStyle = PAL.gold;
-      ctx.fillText("Tree Heart 🫀  [tap H]", 36, y); y += 18;
+      ctx.fillText("Tree Heart 🫀", 36, y); y += 18;
     } else if (state.inLegHut && hasKrakenSkull && !hasLegPart) {
       ctx.fillText("Give back the Kraken Skull:", 36, y); y += 20;
       ctx.fillStyle = PAL.gold;
-      ctx.fillText("Kraken Skull 💀  [tap K]", 36, y); y += 18;
+      ctx.fillText("Kraken Skull 💀", 36, y); y += 18;
     } else if (state.inLegHut && legQuestActivated && !hasLegPart && !hasTrident && seaCreatureKillsForQuest >= 10) {
       ctx.fillText("Claim your reward:", 36, y); y += 20;
       ctx.fillStyle = PAL.gold;
-      ctx.fillText("Trident 🔱  [tap D]", 36, y); y += 18;
+      ctx.fillText("Trident 🔱", 36, y); y += 18;
     } else {
-      ctx.fillText("Give a gift to be healed:", 36, y); y += 20;
-      ctx.fillText("Gold (" + Math.min(sharedGold, 20) + "g)  [tap G]", 36, y); y += 18;
-      ctx.fillText("Potion (have " + inventory.filter(function (e) { return e.category === "potion"; }).length + ")  [tap P]", 36, y); y += 18;
+      ctx.fillText("Give a gift to be healed:", 36, y); y += 18;
+      ctx.fillStyle = PAL.gray;
+      ctx.fillText("Tap an item to give", 36, y); y += 20;
+      ctx.fillStyle = PAL.white;
+      ctx.fillText("Gold (" + Math.min(sharedGold, 20) + "g)", 36, y); y += 18;
+      ctx.fillText("Potion (have " + inventory.filter(function (e) { return e.category === "potion"; }).length + ")", 36, y); y += 18;
       if (party[0].equippedWeapon) {
-        ctx.fillText("Your " + party[0].equippedWeapon.name + "  [tap W]", 36, y); y += 18;
+        ctx.fillText("Your " + party[0].equippedWeapon.name, 36, y); y += 18;
       }
       if (party[0].armorBonus > 0) {
-        ctx.fillText("Your armor  [tap A]", 36, y); y += 18;
+        ctx.fillText("Your armor", 36, y); y += 18;
       }
     }
   } else if (townScreen === "questBoy") {
@@ -3187,7 +3243,7 @@ function renderTownScreenOverlay() {
     } else if (hasRescuedDog) {
       y = fillWrappedText("\"Is that... " + DOG_NAME + "?! You found him!\"", 36, y, TW, 18); y += 4;
       ctx.fillStyle = PAL.gold;
-      ctx.fillText("Hand over the dog  [tap H]", 36, y); y += 18;
+      ctx.fillText("Tap to hand over the dog", 36, y); y += 18;
     } else if (dogQuestStarted) {
       y = fillWrappedText("\"Please, if you see " + DOG_NAME + ", bring him back. He ran off toward one of the huts.\"", 36, y, TW, 18);
     } else {
@@ -3202,7 +3258,7 @@ function renderTownScreenOverlay() {
     } else if (hasGearPart && hasArmPart && hasLegPart) {
       y = fillWrappedText("\"You've found all his parts!\"", 36, y, TW, 18); y += 2;
       ctx.fillStyle = PAL.gold;
-      ctx.fillText("Hand them over  [tap H]", 36, y); y += 18;
+      ctx.fillText("Tap to hand them over", 36, y); y += 18;
     } else {
       y = fillWrappedText("\"Years ago I built a companion — a man of the future. I sent him to Earth, and never heard from him again. If you find any trace of him...\"", 36, y, TW, 18);
     }
@@ -6477,6 +6533,56 @@ bindDirectionalHold("btnE", "right");
 bindDirectionalHold("btnN", "thrust");
 bindDirectionalHold("btnS", "thrust");
 bindDirectionalHold("btnFire", "fire");
+
+// Space-flight's own controls, shown only while flying (see renderAll):
+// a drag joystick for turning (left/right only, same as the reference
+// space-ranger game's joystick) plus dedicated thrust/fire circle
+// buttons, replacing the D-pad/RPG buttons for that screen.
+(function initSpaceJoystick() {
+  var wrap = document.getElementById("joystickWrap");
+  var thumb = document.getElementById("joystickThumb");
+  var activeId = null, ox = 0, oy = 0;
+  var maxR = 32;
+
+  function getCenter() {
+    var r = wrap.getBoundingClientRect();
+    ox = r.left + r.width / 2; oy = r.top + r.height / 2;
+  }
+  function applyPoint(clientX, clientY) {
+    var dx = clientX - ox, dy = clientY - oy;
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d > maxR) { dx = dx / d * maxR; dy = dy / d * maxR; }
+    spaceSetHeld("left", dx < -10);
+    spaceSetHeld("right", dx > 10);
+    thumb.style.left = (45 + dx - 15) + "px";
+    thumb.style.top = (45 + dy - 15) + "px";
+  }
+  function reset() {
+    activeId = null;
+    spaceSetHeld("left", false); spaceSetHeld("right", false);
+    thumb.style.left = "30px"; thumb.style.top = "30px";
+  }
+  wrap.addEventListener("pointerdown", function (e) {
+    e.preventDefault();
+    if (activeId === null) { activeId = e.pointerId; getCenter(); applyPoint(e.clientX, e.clientY); }
+  });
+  wrap.addEventListener("pointermove", function (e) {
+    if (e.pointerId === activeId) { e.preventDefault(); applyPoint(e.clientX, e.clientY); }
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(function (evt) {
+    wrap.addEventListener(evt, function (e) { if (e.pointerId === activeId) reset(); });
+  });
+})();
+
+function bindSpaceCircleBtn(id, key) {
+  var el = document.getElementById(id);
+  el.addEventListener("pointerdown", function (e) { e.preventDefault(); spaceSetHeld(key, true); el.classList.add("pressed"); });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(function (evt) {
+    el.addEventListener(evt, function () { spaceSetHeld(key, false); el.classList.remove("pressed"); });
+  });
+}
+bindSpaceCircleBtn("spaceThrustBtn", "thrust");
+bindSpaceCircleBtn("spaceFireBtn", "fire");
 document.getElementById("btnAttack").onclick = function () {
   if (state.mode === "combat") { combatPlayerAttack(); return; }
   if (townScreen || confirmingRun) return;
@@ -6611,10 +6717,10 @@ function handleTownTap(lx, ly) {
     var sy2 = 115 + 22 + 18; // after gold line + "Tap to buy" line, the "Horse - 50g" row (only when not already mounted)
     if (!state.mounted && ly >= sy2 - 12 && ly < sy2 + 6) { buyHorseFromStable(); return; }
   } else if (townScreen === "moonshop") {
-    var my2 = 115 + 22; // after gold line
+    var my2 = 115 + 22 + 18; // after gold line + "Tap to buy" line
     if (ly >= my2 - 12 && ly < my2 + 6) { buyMoonArmor(); return; }
   } else if (townScreen === "king") {
-    // "You have the wand! [tap T]" only appears (and is only tappable)
+    // "Tap to hand over the wand" only appears (and is only tappable)
     // on the mainland, quest not yet complete, wand in hand — see the
     // matching render branch above for how this y is reached
     if (state.mode === "town" && !wizardQuestComplete && hasWizardsWand) {
@@ -6631,7 +6737,7 @@ function handleTownTap(lx, ly) {
     var fy = 115 + 22; // "water is free" line, then the drink prompt
     if (ly >= fy - 12 && ly < fy + 6) { fountainDrink(); return; }
   } else if (townScreen === "healer" || townScreen === "church") {
-    var hy = 115 + 22; // quote line, then revive rows (only for dead members)
+    var hy = 115 + 22 + 18; // quote line + "Tap a name to revive" line, then revive rows (only present when someone's dead, which is exactly when that hint line is shown)
     for (var m = 0; m < party.length; m++) {
       if (!party[m].alive) {
         if (ly >= hy - 12 && ly < hy + 6) { healerRevive(m); return; }
@@ -6652,7 +6758,7 @@ function handleTownTap(lx, ly) {
       var dy = 115 + 20; // "Claim your reward:" line, then the trade row
       if (ly >= dy - 12 && ly < dy + 6) { giveHutGift("claimTrident"); return; }
     } else {
-      var gy2 = 115 + 20; // "Give a gift" line, then Gold, Potion, [Weapon], [Armor]
+      var gy2 = 115 + 18 + 20; // "Give a gift" + "Tap an item to give" lines, then Gold, Potion, [Weapon], [Armor]
       if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("gold"); return; }
       gy2 += 18;
       if (ly >= gy2 - 12 && ly < gy2 + 6) { giveHutGift("potion"); return; }
@@ -6666,7 +6772,7 @@ function handleTownTap(lx, ly) {
       }
     }
   } else if (townScreen === "questBoy") {
-    // "Hand over the dog [tap H]" only appears (and is only tappable)
+    // "Tap to hand over the dog" only appears (and is only tappable)
     // once the dog's been rescued and the quest isn't already turned in —
     // see the matching render branch above for how this y is reached
     if (hasRescuedDog && !dogQuestComplete) {
@@ -6674,7 +6780,7 @@ function handleTownTap(lx, ly) {
       if (ly >= by - 12 && ly < by + 6) { turnInDog(); return; }
     }
   } else if (townScreen === "moonKing") {
-    // "Hand them over [tap H]" only appears (and is only tappable) once
+    // "Tap to hand them over" only appears (and is only tappable) once
     // all 3 robot parts are found and the quest isn't already turned in —
     // see the matching render branch above for how this y is reached
     if (alienQuestComplete && !futureManComplete && hasGearPart && hasArmPart && hasLegPart) {
