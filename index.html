@@ -52,6 +52,35 @@
     font-family: inherit; font-weight: bold; min-width: 64px;
   }
   .cmdBtn:active { background: #331111; }
+  /* Space-flight controls — same scheme as the reference space-ranger
+     game: a drag joystick (turn only) plus dedicated thrust/fire
+     buttons, replacing the D-pad and RPG command buttons while flying,
+     since those don't apply there. */
+  #spaceControls {
+    display: none; align-items: center; justify-content: space-between;
+    width: 100%; touch-action: none;
+  }
+  #joystickWrap {
+    position: relative; width: 90px; height: 90px; flex-shrink: 0; touch-action: none;
+  }
+  #joystickBase {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 2px solid rgba(170,170,255,0.4); background: rgba(170,170,255,0.08);
+  }
+  #joystickThumb {
+    position: absolute; width: 30px; height: 30px; border-radius: 50%;
+    background: rgba(170,170,255,0.85); border: 2px solid #fff;
+    top: 30px; left: 30px; touch-action: none; pointer-events: none;
+  }
+  #spaceBtns { display: flex; align-items: center; gap: 12px; }
+  #spaceThrustBtn, #spaceFireBtn {
+    border-radius: 50%; background: #000; cursor: pointer; touch-action: none;
+    font-family: inherit; font-weight: bold; display: flex; align-items: center; justify-content: center;
+  }
+  #spaceThrustBtn { width: 54px; height: 54px; border: 2px solid #ffcc33; color: #ffcc33; font-size: 20px; }
+  #spaceFireBtn { width: 68px; height: 68px; border: 2px solid #ff6666; color: #ff6666; font-size: 13px; }
+  #spaceThrustBtn.pressed { background: rgba(255,204,51,0.25); }
+  #spaceFireBtn.pressed { background: rgba(255,102,102,0.25); }
   #errBox {
     position: fixed; bottom: 0; left: 0; right: 0; background: #400; color: #fdd;
     font-size: 11px; padding: 8px; z-index: 999; display: none; white-space: pre-wrap;
@@ -119,6 +148,16 @@
       <button class="cmdBtn" id="btnDismount" style="display:none;">DISMOUNT</button>
       <button class="cmdBtn" id="btnTame" style="display:none;">TAME</button>
       <button class="cmdBtn" id="btnShoot" style="display:none;">SHOOT</button>
+    </div>
+    <div id="spaceControls">
+      <div id="joystickWrap">
+        <div id="joystickBase"></div>
+        <div id="joystickThumb"></div>
+      </div>
+      <div id="spaceBtns">
+        <button id="spaceThrustBtn">&#9650;</button>
+        <button id="spaceFireBtn">FIRE</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2898,9 +2937,10 @@ function renderAll() {
   if (actionChoices) renderActionChoiceOverlay();
 
   // FIRE button only makes sense while actually sailing, out on the map
-  // (not in combat, not in a town popup)
+  // (not in combat, not in a town popup) — space-flight has its own
+  // dedicated FIRE button as part of #spaceControls instead
   var fireBtn = document.getElementById("btnFire");
-  fireBtn.style.display = ((state.sailing && state.mode !== "combat") || state.mode === "spaceflight") ? "inline-block" : "none";
+  fireBtn.style.display = (state.sailing && state.mode !== "combat") ? "inline-block" : "none";
 
   // DISMOUNT shows whenever mounted, out on the map
   var dismountBtn = document.getElementById("btnDismount");
@@ -2915,6 +2955,15 @@ function renderAll() {
   var shootBtn = document.getElementById("btnShoot");
   var leaderWeapon = party[0] && party[0].equippedWeapon;
   shootBtn.style.display = (state.mode === "combat" && leaderWeapon && leaderWeapon.ranged) ? "inline-block" : "none";
+
+  // While flying, swap the whole D-pad/RPG command row for the
+  // joystick+thrust+fire controls (matching the reference space-ranger
+  // game) — none of ATTACK/CAST/ACTION/MENU/RUN/the arrow D-pad apply
+  // to a space-flight scene, so showing them was just confusing clutter.
+  var flying = state.mode === "spaceflight";
+  document.getElementById("dpadWrap").style.display = flying ? "none" : "grid";
+  document.getElementById("cmdBtns").style.display = flying ? "none" : "grid";
+  document.getElementById("spaceControls").style.display = flying ? "flex" : "none";
 }
 
 // ============================================================
@@ -6484,6 +6533,56 @@ bindDirectionalHold("btnE", "right");
 bindDirectionalHold("btnN", "thrust");
 bindDirectionalHold("btnS", "thrust");
 bindDirectionalHold("btnFire", "fire");
+
+// Space-flight's own controls, shown only while flying (see renderAll):
+// a drag joystick for turning (left/right only, same as the reference
+// space-ranger game's joystick) plus dedicated thrust/fire circle
+// buttons, replacing the D-pad/RPG buttons for that screen.
+(function initSpaceJoystick() {
+  var wrap = document.getElementById("joystickWrap");
+  var thumb = document.getElementById("joystickThumb");
+  var activeId = null, ox = 0, oy = 0;
+  var maxR = 32;
+
+  function getCenter() {
+    var r = wrap.getBoundingClientRect();
+    ox = r.left + r.width / 2; oy = r.top + r.height / 2;
+  }
+  function applyPoint(clientX, clientY) {
+    var dx = clientX - ox, dy = clientY - oy;
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d > maxR) { dx = dx / d * maxR; dy = dy / d * maxR; }
+    spaceSetHeld("left", dx < -10);
+    spaceSetHeld("right", dx > 10);
+    thumb.style.left = (45 + dx - 15) + "px";
+    thumb.style.top = (45 + dy - 15) + "px";
+  }
+  function reset() {
+    activeId = null;
+    spaceSetHeld("left", false); spaceSetHeld("right", false);
+    thumb.style.left = "30px"; thumb.style.top = "30px";
+  }
+  wrap.addEventListener("pointerdown", function (e) {
+    e.preventDefault();
+    if (activeId === null) { activeId = e.pointerId; getCenter(); applyPoint(e.clientX, e.clientY); }
+  });
+  wrap.addEventListener("pointermove", function (e) {
+    if (e.pointerId === activeId) { e.preventDefault(); applyPoint(e.clientX, e.clientY); }
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(function (evt) {
+    wrap.addEventListener(evt, function (e) { if (e.pointerId === activeId) reset(); });
+  });
+})();
+
+function bindSpaceCircleBtn(id, key) {
+  var el = document.getElementById(id);
+  el.addEventListener("pointerdown", function (e) { e.preventDefault(); spaceSetHeld(key, true); el.classList.add("pressed"); });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(function (evt) {
+    el.addEventListener(evt, function () { spaceSetHeld(key, false); el.classList.remove("pressed"); });
+  });
+}
+bindSpaceCircleBtn("spaceThrustBtn", "thrust");
+bindSpaceCircleBtn("spaceFireBtn", "fire");
 document.getElementById("btnAttack").onclick = function () {
   if (state.mode === "combat") { combatPlayerAttack(); return; }
   if (townScreen || confirmingRun) return;
